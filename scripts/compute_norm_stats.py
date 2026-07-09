@@ -93,12 +93,15 @@ def main(
     max_frames: int | None = None,
     repo_id: str | None = None,
     assets_base_dir: str | None = None,
+    num_workers: int | None = None,
 ):
     config = _config.get_config(config_name)
     if repo_id is not None:
         config = dataclasses.replace(config, data=dataclasses.replace(config.data, repo_id=repo_id))
     if assets_base_dir is not None:
         config = dataclasses.replace(config, assets_base_dir=assets_base_dir)
+    if num_workers is not None:
+        config = dataclasses.replace(config, num_workers=num_workers)
     data_config = config.data.create(config.assets_dirs, config.model)
 
     if data_config.rlds_data_dir is not None:
