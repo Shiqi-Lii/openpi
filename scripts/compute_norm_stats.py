@@ -30,10 +30,11 @@ def create_torch_dataloader(
     model_config: _model.BaseModelConfig,
     num_workers: int,
     max_frames: int | None = None,
+    skip_videos: bool = False,
 ) -> tuple[_data_loader.Dataset, int]:
     if data_config.repo_id is None:
         raise ValueError("Data config must have a repo_id")
-    dataset = _data_loader.create_torch_dataset(data_config, action_horizon, model_config)
+    dataset = _data_loader.create_torch_dataset(data_config, action_horizon, model_config, skip_videos=skip_videos)
     dataset = _data_loader.TransformedDataset(
         dataset,
         [
@@ -94,6 +95,7 @@ def main(
     repo_id: str | None = None,
     assets_base_dir: str | None = None,
     num_workers: int | None = None,
+    skip_videos: bool = False,
 ):
     config = _config.get_config(config_name)
     if repo_id is not None:
@@ -110,7 +112,13 @@ def main(
         )
     else:
         data_loader, num_batches = create_torch_dataloader(
-            data_config, config.model.action_horizon, config.batch_size, config.model, config.num_workers, max_frames
+            data_config,
+            config.model.action_horizon,
+            config.batch_size,
+            config.model,
+            config.num_workers,
+            max_frames,
+            skip_videos,
         )
 
     keys = ["state", "actions"]

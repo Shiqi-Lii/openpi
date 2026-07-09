@@ -8,7 +8,7 @@ EXP_NAME="nz100_v1"
 GPU_ID="0"
 NUM_TRAIN_STEPS="20000"
 BATCH_SIZE="32"
-NUM_WORKERS="4"
+NUM_WORKERS="8"
 LOG_INTERVAL="100"
 SAVE_INTERVAL="1000"
 KEEP_PERIOD="5000"
@@ -43,7 +43,9 @@ python scripts/generate_lerobot_episodes_stats.py "${DATA_REPO_ID}"
 python scripts/compute_norm_stats.py \
     --config-name pi05_nz100 \
     --repo-id "${DATA_REPO_ID}" \
-    --assets-base-dir "${ASSETS_DIR}"
+    --assets-base-dir "${ASSETS_DIR}" \
+    --num-workers "${NUM_WORKERS}" \
+    --skip-videos
 
 python scripts/train.py pi05_nz100 \
     --data.repo-id "${DATA_REPO_ID}" \

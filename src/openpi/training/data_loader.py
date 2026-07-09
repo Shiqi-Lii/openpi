@@ -97,6 +97,40 @@ class TransformedDataset(Dataset[T_co]):
         return len(self._dataset)
 
 
+class LeRobotSkipVideosDataset(Dataset[T_co]):
+    """Wrap a LeRobotDataset so __getitem__ does not decode videos.
+
+    This is useful for computing normalization statistics: OpenPI only computes
+    stats for state/actions, but the normal LeRobot __getitem__ path still
+    decodes camera frames whenever a dataset has video features. We temporarily
+    mark video features as non-video so LeRobot skips decoding, then inject zero
+    image placeholders with the original feature keys so downstream repack/input
+    transforms can still run.
+    """
+
+    def __init__(self, dataset: Dataset):
+        self._dataset = dataset
+        self._video_shapes: dict[str, tuple[int, ...]] = {}
+        meta = getattr(dataset, "meta", None)
+        info = getattr(meta, "info", None)
+        if info is None:
+            return
+
+        for key, feature in info.get("features", {}).items():
+            if feature.get("dtype") == "video":
+                self._video_shapes[key] = tuple(feature["shape"])
+                feature["dtype"] = "disabled_video"
+
+    def __getitem__(self, index: SupportsIndex) -> T_co:
+        item = dict(self._dataset[index])
+        for key, shape in self._video_shapes.items():
+            item.setdefault(key, np.zeros(shape, dtype=np.uint8))
+        return item
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+
 class IterableTransformedDataset(IterableDataset[T_co]):
     def __init__(
         self,
@@ -163,7 +197,11 @@ class FakeDataset(Dataset):
 
 
 def create_torch_dataset(
-    data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
+    data_config: _config.DataConfig,
+    action_horizon: int,
+    model_config: _model.BaseModelConfig,
+    *,
+    skip_videos: bool = False,
 ) -> Dataset:
     """Create a dataset for training."""
     repo_id = data_config.repo_id
@@ -188,6 +226,8 @@ def create_torch_dataset(
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
     )
+    if skip_videos:
+        dataset = LeRobotSkipVideosDataset(dataset)
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
