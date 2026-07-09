@@ -19,6 +19,39 @@ import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
 
+_ORIGINAL_TORCH_STACK = torch.stack
+_LEROBOT_TORCH_STACK_PATCHED = False
+
+
+def _patch_torch_stack_for_lerobot_columns() -> None:
+    """Make old LeRobot code work with newer Hugging Face datasets columns.
+
+    The LeRobot version pinned by OpenPI calls `torch.stack(dataset["timestamp"])`.
+    Newer versions of `datasets` return a `Column` object for that expression,
+    while `torch.stack` only accepts a list/tuple of tensors. Converting the
+    column values to tensors keeps the old LeRobot code path working without
+    patching the installed dependency in site-packages.
+    """
+
+    global _LEROBOT_TORCH_STACK_PATCHED
+    if _LEROBOT_TORCH_STACK_PATCHED:
+        return
+
+    def stack_compat(tensors, *args, **kwargs):
+        if not isinstance(tensors, (list, tuple)):
+            try:
+                tensors = list(tensors)
+            except TypeError:
+                return _ORIGINAL_TORCH_STACK(tensors, *args, **kwargs)
+
+        if tensors and not isinstance(tensors[0], torch.Tensor):
+            tensors = [torch.as_tensor(tensor) for tensor in tensors]
+
+        return _ORIGINAL_TORCH_STACK(tensors, *args, **kwargs)
+
+    torch.stack = stack_compat
+    _LEROBOT_TORCH_STACK_PATCHED = True
+
 
 class Dataset(Protocol[T_co]):
     """Interface for a dataset with random access."""
@@ -143,6 +176,8 @@ def create_torch_dataset(
     # needed merely to locate the files.
     local_root = pathlib.Path(repo_id).expanduser()
     root = local_root.resolve() if local_root.is_dir() else None
+
+    _patch_torch_stack_for_lerobot_columns()
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=root)
     dataset = lerobot_dataset.LeRobotDataset(

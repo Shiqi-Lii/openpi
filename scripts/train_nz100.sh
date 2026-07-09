@@ -3,10 +3,10 @@ set -euo pipefail
 # Run with: bash scripts/train_nz100.sh
 
 # Modify these values for your training run.
-DATA_REPO_ID="data/data_lerobot_v21_h264"
+DATA_REPO_ID="/mnt/16T/lisq5005_dir/openpi/data/data_pickbottle"
 EXP_NAME="nz100_v1"
 GPU_ID="0"
-NUM_TRAIN_STEPS="30000"
+NUM_TRAIN_STEPS="20000"
 BATCH_SIZE="32"
 NUM_WORKERS="4"
 LOG_INTERVAL="100"
@@ -18,7 +18,7 @@ FSDP_DEVICES="1"
 CONDA_ROOT="/mnt/16T/App_dir/conda_dir/miniconda3"
 CONDA_ENV="${CONDA_ROOT}/envs/openpi_lsq"
 WORK_DIR="/mnt/16T/lisq5005_dir"
-CACHE_DIR="${WORK_DIR}/cache"
+CACHE_DIR="${WORK_DIR}/.cache"
 ASSETS_DIR="${WORK_DIR}/openpi_assets"
 CHECKPOINT_DIR="${WORK_DIR}/openpi_checkpoints"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
