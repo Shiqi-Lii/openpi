@@ -26,6 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "${CACHE_DIR}" "${ASSETS_DIR}" "${CHECKPOINT_DIR}"
 
+export OPENPI_DATA_HOME="${CACHE_DIR}/openpi"
 export UV_CACHE_DIR="${CACHE_DIR}/uv"
 export HF_HOME="${CACHE_DIR}/huggingface"
 export XDG_CACHE_HOME="${CACHE_DIR}"
