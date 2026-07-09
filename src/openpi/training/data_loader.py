@@ -90,6 +90,7 @@ class TransformedDataset(Dataset[T_co]):
         self._transform = _transforms.compose(transforms)
 
     def __getitem__(self, index: SupportsIndex) -> T_co:
+        _patch_torch_stack_for_lerobot_columns()
         return self._transform(self._dataset[index])
 
     def __len__(self) -> int:
