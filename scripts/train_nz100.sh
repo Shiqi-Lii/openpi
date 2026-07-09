@@ -38,6 +38,8 @@ conda activate "${CONDA_ENV}"
 
 cd "${REPO_ROOT}"
 
+python scripts/generate_lerobot_episodes_stats.py "${DATA_REPO_ID}"
+
 python scripts/compute_norm_stats.py \
     --config-name pi05_nz100 \
     --repo-id "${DATA_REPO_ID}" \
