@@ -40,6 +40,7 @@ class NZ100Ros2IO:
         self._modbus_gripper_pub = None
 
     def connect(self) -> None:
+        print("Connecting to NZ100 ROS2 IO...")
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
@@ -76,6 +77,10 @@ class NZ100Ros2IO:
         self._executor_thread = threading.Thread(target=self._spin, daemon=True)
         self._executor_thread.start()
 
+        print(
+            "Waiting for first NZ100 observation: "
+            f"camera={self.config.top_camera_topic}, joint_state={self.config.joint_state_topic}"
+        )
         self._wait_for_first_observation()
         print(
             "NZ100 ROS2 IO connected: "
@@ -93,6 +98,7 @@ class NZ100Ros2IO:
             self._node.destroy_node()
         if self._rclpy is not None and self._rclpy.ok():
             self._rclpy.shutdown()
+        print("NZ100 ROS2 IO disconnected")
 
     def get_top_image(self) -> np.ndarray:
         if self._latest_image is None:
@@ -241,11 +247,26 @@ class NZ100Ros2IO:
         self._modbus_gripper_pub.publish(msg)
 
     def _wait_for_first_observation(self, *, require_image: bool = True, require_joint_state: bool = True) -> None:
+        last_status_time = 0.0
         while True:
             image_ok = self._latest_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             if image_ok and joint_ok:
+                print(
+                    "First NZ100 observation received: "
+                    f"image={'ok' if image_ok else 'skipped'}, "
+                    f"joint_state={'ok' if joint_ok else 'skipped'}"
+                )
                 return
+            now = time.time()
+            if now - last_status_time >= 2.0:
+                missing = []
+                if require_image and self._latest_image is None:
+                    missing.append(self.config.top_camera_topic)
+                if require_joint_state and self._latest_joint_state is None:
+                    missing.append(self.config.joint_state_topic)
+                print(f"Waiting for ROS2 topics: {missing}")
+                last_status_time = now
             time.sleep(0.05)
 
 

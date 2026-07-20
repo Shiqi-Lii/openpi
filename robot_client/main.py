@@ -79,6 +79,17 @@ def main() -> None:
         rtc_decay_tau=client_base.rtc_decay_tau,
     )
 
+    print(
+        "Starting NZ100 OpenPI client: "
+        f"server=tcp://{config.server_host}:{config.server_port}, "
+        f"mode={config.execution_mode}, "
+        f"control_hz={config.control_hz}, "
+        f"open_loop_horizon={config.open_loop_horizon}, "
+        f"max_steps={config.max_steps}, "
+        f"mock={args.mock}"
+    )
+    print(f"Language instruction: {config.prompt!r}")
+
     ros_io = None
     try:
         if not args.mock:
@@ -86,6 +97,8 @@ def main() -> None:
             ros_io.connect()
             if app_config.ros2.home_on_start:
                 ros_io.move_to_home()
+            else:
+                print("Skipping NZ100 startup pose command.")
 
         if config.execution_mode == "sync_chunk":
             _run_sync_loop(config, ros_io=ros_io, mock=args.mock, once=args.once)
@@ -115,6 +128,7 @@ def _execute_action_chunk(
     step_sleep = 1.0 / config.control_hz if config.control_hz > 0 else 0.0
     for raw_action in action_chunk:
         action = discretize_plc_grippers(split_action(raw_action))
+        print(f"Executing action[{executed_steps}]: {_format_action(action)}")
         if mock:
             print(action)
         else:
@@ -129,14 +143,23 @@ def _execute_action_chunk(
 def _run_sync_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
     client = NZ100SyncClient(config)
     executed_steps = 0
+    print("Entering sync_chunk control loop.")
 
     while True:
+        print(f"Reading observation before request; executed_steps={executed_steps}")
         top_image, robot_state = _read_observation(ros_io, mock=mock)
+        print(f"Requesting action chunk from OpenPI server; state={_format_state(robot_state)}")
+        tic = time.time()
         action_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+        print(
+            "Received action chunk: "
+            f"shape={tuple(action_chunk.shape)}, latency={time.time() - tic:.3f}s"
+        )
         if config.open_loop_horizon > 0:
             action_chunk = action_chunk[: config.open_loop_horizon]
         if not config.execute_full_chunk:
             action_chunk = action_chunk[:1]
+        print(f"Executing {len(action_chunk)} actions from current chunk.")
 
         executed_steps = _execute_action_chunk(
             action_chunk,
@@ -146,17 +169,27 @@ def _run_sync_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bo
             executed_steps=executed_steps,
         )
         if config.max_steps > 0 and executed_steps >= config.max_steps:
+            print(f"Reached max_steps={config.max_steps}; stopping.")
             return
         if once:
+            print("--once enabled; stopping after one chunk.")
             return
 
 
 def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
     client = NZ100RTCClient(config)
     executed_steps = 0
+    print(f"Entering {config.execution_mode} control loop.")
 
+    print("Reading initial observation for RTC.")
     top_image, robot_state = _read_observation(ros_io, mock=mock)
+    print(f"Requesting initial RTC action chunk; state={_format_state(robot_state)}")
+    tic = time.time()
     current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+    print(
+        "Received initial RTC chunk: "
+        f"shape={tuple(current_chunk.shape)}, latency={time.time() - tic:.3f}s"
+    )
     if config.open_loop_horizon > 0:
         current_chunk = current_chunk[: config.open_loop_horizon]
 
@@ -167,6 +200,10 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
                 raise ValueError("rtc_execute_horizon must be positive")
 
             next_top_image, next_robot_state = _read_observation(ros_io, mock=mock)
+            print(
+                "Requesting next RTC chunk in background: "
+                f"executed_steps={executed_steps}, state={_format_state(next_robot_state)}"
+            )
             next_future = executor.submit(
                 client.infer,
                 top_image=next_top_image,
@@ -183,13 +220,42 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
                 executed_steps=executed_steps,
             )
             if config.max_steps > 0 and executed_steps >= config.max_steps:
+                print(f"Reached max_steps={config.max_steps}; stopping.")
                 return
             if once:
+                print("--once enabled; stopping after one RTC execution window.")
                 return
 
+            tic = time.time()
             current_chunk = next_future.result()
+            print(
+                "Received next RTC chunk: "
+                f"shape={tuple(current_chunk.shape)}, wait_after_execution={time.time() - tic:.3f}s"
+            )
             if config.open_loop_horizon > 0:
                 current_chunk = current_chunk[: config.open_loop_horizon]
+
+
+def _format_state(state: NZ100RobotState) -> str:
+    return (
+        f"left={_format_array(state.left_joints)}, "
+        f"left_gripper={state.left_gripper:.1f}, "
+        f"right={_format_array(state.right_joints)}, "
+        f"right_gripper={state.right_gripper:.1f}"
+    )
+
+
+def _format_action(action) -> str:
+    return (
+        f"left={_format_array(action.left_joints)}, "
+        f"left_gripper={action.left_gripper:.1f}, "
+        f"right={_format_array(action.right_joints)}, "
+        f"right_gripper={action.right_gripper:.1f}"
+    )
+
+
+def _format_array(values: np.ndarray) -> str:
+    return np.array2string(np.asarray(values, dtype=np.float32), precision=3, suppress_small=True)
 
 
 if __name__ == "__main__":
