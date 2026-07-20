@@ -66,8 +66,11 @@ class Policy(BasePolicy):
 
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+        rtc = obs.get("_rtc")
+        obs_without_rtc = {key: value for key, value in obs.items() if key != "_rtc"}
+
         # Make a copy since transformations may modify the inputs in place.
-        inputs = jax.tree.map(lambda x: x, obs)
+        inputs = jax.tree.map(lambda x: x, obs_without_rtc)
         inputs = self._input_transform(inputs)
         if not self._is_pytorch_model:
             # Make a batch and convert to jax.Array.
@@ -87,6 +90,11 @@ class Policy(BasePolicy):
                 noise = noise[None, ...]  # Make it (1, action_horizon, action_dim)
             sample_kwargs["noise"] = noise
 
+        if rtc is not None:
+            if self._is_pytorch_model:
+                raise NotImplementedError("RTC inference is currently implemented for JAX OpenPI models only.")
+            sample_kwargs.update(self._prepare_rtc_sample_kwargs(obs_without_rtc, rtc))
+
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
         outputs = {
@@ -104,6 +112,40 @@ class Policy(BasePolicy):
             "infer_ms": model_time * 1000,
         }
         return outputs
+
+    def _prepare_rtc_sample_kwargs(self, obs: dict, rtc: dict) -> dict[str, Any]:
+        """Transform previous actions into model space for RTC sampling.
+
+        The robot client sends previous actions in the raw robot/action layout.
+        We intentionally run them through the same input transform stack as
+        normal training actions so DeltaActions, Normalize, and padding all
+        match the model's action space.
+        """
+
+        if not isinstance(rtc, dict):
+            raise ValueError(f"_rtc must be a dict, got {type(rtc).__name__}")
+        if "prev_actions" not in rtc:
+            raise ValueError("_rtc.prev_actions is required for RTC inference")
+
+        rtc_inputs = jax.tree.map(lambda x: x, {**obs, "actions": rtc["prev_actions"]})
+        rtc_inputs = self._input_transform(rtc_inputs)
+        prev_actions = jnp.asarray(rtc_inputs["actions"])[np.newaxis, ...]
+
+        method = rtc.get("method", "prefix")
+        if method == "prefix":
+            method_id = 1
+        elif method == "guidance":
+            method_id = 2
+        else:
+            raise ValueError(f"Unsupported RTC method: {method!r}")
+
+        return {
+            "rtc_prev_actions": prev_actions,
+            "rtc_prefix_len": jnp.asarray(int(rtc.get("prefix_len", prev_actions.shape[-2])), dtype=jnp.int32),
+            "rtc_method_id": jnp.asarray(method_id, dtype=jnp.int32),
+            "rtc_guidance_weight": jnp.asarray(float(rtc.get("guidance_weight", 5.0)), dtype=jnp.float32),
+            "rtc_decay_tau": jnp.asarray(float(rtc.get("decay_tau", 3.0)), dtype=jnp.float32),
+        }
 
     @property
     def metadata(self) -> dict[str, Any]:

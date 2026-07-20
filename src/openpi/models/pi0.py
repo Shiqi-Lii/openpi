@@ -221,6 +221,11 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
+        rtc_prev_actions: at.Float[at.Array, "b ah ad"] | None = None,
+        rtc_prefix_len: at.Int[at.Array, ""] | None = None,
+        rtc_method_id: at.Int[at.Array, ""] | None = None,
+        rtc_guidance_weight: at.Float[at.Array, ""] | None = None,
+        rtc_decay_tau: at.Float[at.Array, ""] | None = None,
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
@@ -236,8 +241,7 @@ class Pi0(_model.BaseModel):
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
         _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
 
-        def step(carry):
-            x_t, time = carry
+        def denoise(x_t, time):
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                 observation, x_t, jnp.broadcast_to(time, batch_size)
             )
@@ -266,8 +270,11 @@ class Pi0(_model.BaseModel):
                 adarms_cond=[None, adarms_cond],
             )
             assert prefix_out is None
-            v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+            return self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
+        def step(carry):
+            x_t, time = carry
+            v_t = denoise(x_t, time)
             return x_t + dt * v_t, time + dt
 
         def cond(carry):
@@ -275,5 +282,59 @@ class Pi0(_model.BaseModel):
             # robust to floating-point error
             return time >= -dt / 2
 
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+        if rtc_prev_actions is None:
+            x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+            return x_0
+
+        prefix_len = jnp.minimum(
+            self.action_horizon,
+            jnp.maximum(0, rtc_prefix_len if rtc_prefix_len is not None else self.action_horizon),
+        )
+        prefix_mask = (jnp.arange(self.action_horizon) < prefix_len)[None, :, None]
+        prev_actions = rtc_prev_actions[:, : self.action_horizon, : self.action_dim]
+        prev_actions = jnp.pad(
+            prev_actions,
+            (
+                (0, 0),
+                (0, self.action_horizon - prev_actions.shape[1]),
+                (0, self.action_dim - prev_actions.shape[2]),
+            ),
+        )
+
+        def prefix_step(carry):
+            x_t, time = carry
+            x_t = jnp.where(prefix_mask, prev_actions, x_t)
+            v_t = denoise(x_t, time)
+            x_t = x_t + dt * v_t
+            x_t = jnp.where(prefix_mask, prev_actions, x_t)
+            return x_t, time + dt
+
+        def guidance_weights():
+            positions = jnp.arange(self.action_horizon)
+            locked = positions < prefix_len
+            tau = jnp.maximum(rtc_decay_tau if rtc_decay_tau is not None else 3.0, 1e-6)
+            decay = jnp.exp(-jnp.maximum(positions - prefix_len + 1, 0) / tau)
+            weights = jnp.where(locked, 1.0, decay)
+            return weights[None, :, None]
+
+        def guidance_step(carry):
+            x_t, time = carry
+            v_t = denoise(x_t, time)
+            # OpenPI uses t=1 as noise and t=0 as the final action. A local
+            # clean-action estimate is x_0 ~= x_t - t * v_t.
+            action_estimate = x_t - time * v_t
+            weights = guidance_weights()
+            error = (prev_actions - action_estimate) * weights
+            guidance = rtc_guidance_weight if rtc_guidance_weight is not None else 5.0
+            v_t = v_t - guidance * error
+            return x_t + dt * v_t, time + dt
+
+        method_id = rtc_method_id if rtc_method_id is not None else jnp.asarray(1, dtype=jnp.int32)
+        method_index = jnp.clip(method_id - 1, 0, 1)
+
+        def rtc_step(carry):
+            return jax.lax.switch(method_index, (prefix_step, guidance_step), carry)
+
+        x_0, _ = jax.lax.while_loop(cond, rtc_step, (noise, 1.0))
+        x_0 = jax.lax.cond(method_id == 1, lambda x: jnp.where(prefix_mask, prev_actions, x), lambda x: x, x_0)
         return x_0

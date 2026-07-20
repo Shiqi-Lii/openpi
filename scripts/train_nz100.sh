@@ -6,7 +6,7 @@ set -euo pipefail
 DATA_REPO_ID="/mnt/16T/lisq5005_dir/openpi/data/data_pickbottle"
 EXP_NAME="nz100_v1"
 GPU_ID="0"
-NUM_TRAIN_STEPS="20000"
+NUM_TRAIN_STEPS="30000"
 BATCH_SIZE="32"
 NUM_WORKERS="8"
 LOG_INTERVAL="100"
@@ -33,6 +33,9 @@ export XDG_CACHE_HOME="${CACHE_DIR}"
 export WANDB_DIR="${CACHE_DIR}/wandb"
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+
+# export CUDA_VISIBLE_DEVICES=0,1,2
+# export FSDP_DEVICES=3
 
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 conda activate "${CONDA_ENV}"
