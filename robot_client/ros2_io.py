@@ -34,6 +34,8 @@ class NZ100Ros2IO:
         self._latest_joint_state = None
         self._latest_left_gripper = float(config.gripper_default_value)
         self._latest_right_gripper = float(config.gripper_default_value)
+        self._received_left_gripper_state = False
+        self._received_right_gripper_state = False
 
         self._left_trajectory_pub = None
         self._right_trajectory_pub = None
@@ -79,7 +81,9 @@ class NZ100Ros2IO:
 
         print(
             "Waiting for first NZ100 observation: "
-            f"camera={self.config.top_camera_topic}, joint_state={self.config.joint_state_topic}"
+            f"camera={self.config.top_camera_topic}, "
+            f"joint_state={self.config.joint_state_topic}, "
+            f"gripper_state={self.config.gripper_state_topic}"
         )
         self._wait_for_first_observation()
         print(
@@ -185,10 +189,12 @@ class NZ100Ros2IO:
                 self._latest_left_gripper = _modbus_to_policy_value(
                     values[index], self.config.modbus_open_value, self.config.modbus_closed_value
                 )
+                self._received_left_gripper_state = True
             elif name == self.config.right_gripper_key:
                 self._latest_right_gripper = _modbus_to_policy_value(
                     values[index], self.config.modbus_open_value, self.config.modbus_closed_value
                 )
+                self._received_right_gripper_state = True
 
     def _extract_named_positions(self, joint_names: tuple[str, ...]) -> np.ndarray:
         msg = self._latest_joint_state
@@ -246,16 +252,26 @@ class NZ100Ros2IO:
         ]
         self._modbus_gripper_pub.publish(msg)
 
-    def _wait_for_first_observation(self, *, require_image: bool = True, require_joint_state: bool = True) -> None:
+    def _wait_for_first_observation(
+        self,
+        *,
+        require_image: bool = True,
+        require_joint_state: bool = True,
+        require_gripper_state: bool = True,
+    ) -> None:
         last_status_time = 0.0
         while True:
             image_ok = self._latest_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
-            if image_ok and joint_ok:
+            gripper_ok = (
+                self._received_left_gripper_state and self._received_right_gripper_state
+            ) or not require_gripper_state
+            if image_ok and joint_ok and gripper_ok:
                 print(
                     "First NZ100 observation received: "
                     f"image={'ok' if image_ok else 'skipped'}, "
-                    f"joint_state={'ok' if joint_ok else 'skipped'}"
+                    f"joint_state={'ok' if joint_ok else 'skipped'}, "
+                    f"gripper_state={'ok' if gripper_ok else 'skipped'}"
                 )
                 return
             now = time.time()
@@ -265,6 +281,14 @@ class NZ100Ros2IO:
                     missing.append(self.config.top_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
+                if require_gripper_state:
+                    gripper_missing = []
+                    if not self._received_left_gripper_state:
+                        gripper_missing.append(self.config.left_gripper_key)
+                    if not self._received_right_gripper_state:
+                        gripper_missing.append(self.config.right_gripper_key)
+                    if gripper_missing:
+                        missing.append(f"{self.config.gripper_state_topic} keys={gripper_missing}")
                 print(f"Waiting for ROS2 topics: {missing}")
                 last_status_time = now
             time.sleep(0.05)

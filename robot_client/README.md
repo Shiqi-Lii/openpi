@@ -35,7 +35,6 @@ pip install -e /path/to/openpi/packages/openpi-client
 uv run scripts/serve_policy.py policy:checkpoint \
   --policy.config=pi05_nz100 \
   --policy.dir=/path/to/checkpoint_step \
-  --port=8000
 ```
 
 ## 测试连接
@@ -100,6 +99,7 @@ client 发给 OpenPI server 的 observation 结构是：
 真实运行：
 
 ```bash
+source /home/f/ysrobot_ws2/common/install/setup.bash
 python -m robot_client.main --config robot_client/configs/nz100_client.yaml
 ```
 
@@ -167,7 +167,7 @@ execution_mode: rtc_guidance
 
 `sync_chunk` 是普通 OpenPI chunk 推理；`rtc_prefix` 会硬锁上一段 action 前缀；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。默认配置仍是 `sync_chunk`，不启用 RTC 时不会影响普通推理。
 
-启动和运行过程中，如果相机或关节状态还没到达，client 会一直等待对应 ROS2 topic 的第一帧数据。
+启动和运行过程中，如果相机、关节状态或双夹爪状态还没到达，client 会一直等待对应 ROS2 topic 的第一帧数据。
 
 如需启动时先回位再执行策略，在配置文件中设置：
 
