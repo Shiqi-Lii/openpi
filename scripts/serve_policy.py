@@ -28,6 +28,8 @@ class Checkpoint:
     config: str
     # Checkpoint directory (e.g., "checkpoints/pi0_aloha_sim/exp/10000").
     dir: str
+    # Optional asset id used to load norm stats from checkpoint assets.
+    asset_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -89,8 +91,17 @@ def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
+            train_config = _config.get_config(args.policy.config)
+            if args.policy.asset_id is not None:
+                train_config = dataclasses.replace(
+                    train_config,
+                    data=dataclasses.replace(
+                        train_config.data,
+                        assets=_config.AssetsConfig(asset_id=args.policy.asset_id),
+                    ),
+                )
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                train_config, args.policy.dir, default_prompt=args.default_prompt
             )
         case Default():
             return create_default_policy(args.env, default_prompt=args.default_prompt)
