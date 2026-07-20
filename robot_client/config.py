@@ -61,7 +61,13 @@ class Ros2Config:
     )
 
     point_time_from_start: float = 0.01
-    observation_timeout_s: float = 3.0
+
+    # Optional startup homing. When enabled, both arm trajectories are
+    # published together and policy inference starts after both are complete.
+    home_on_start: bool = True
+    left_home_positions: tuple[float, ...] = (0.36, 0.36, -0.01, 1.92, 1.57, 0.0, -1.40)
+    right_home_positions: tuple[float, ...] = (-0.36, 0.36, -0.01, 1.92, 1.57, 0.0, 0.78)
+    home_time_from_start: float = 4.0
 
     # Dual-gripper Modbus topics. This matches the data collection setup.
     gripper_state_topic: str = "/robot/api/io/state"
@@ -148,7 +154,10 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
         "right_trajectory_topic",
         "left_joint_names",
         "right_joint_names",
-        "observation_timeout_s",
+        "home_on_start",
+        "left_home_positions",
+        "right_home_positions",
+        "home_time_from_start",
         "gripper_state_topic",
         "gripper_cmd_topic",
         "left_gripper_key",

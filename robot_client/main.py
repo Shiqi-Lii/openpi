@@ -80,11 +80,13 @@ def main() -> None:
     )
 
     ros_io = None
-    if not args.mock:
-        ros_io = NZ100Ros2IO(app_config.ros2)
-        ros_io.connect()
-
     try:
+        if not args.mock:
+            ros_io = NZ100Ros2IO(app_config.ros2)
+            ros_io.connect()
+            if app_config.ros2.home_on_start:
+                ros_io.move_to_home()
+
         if config.execution_mode == "sync_chunk":
             _run_sync_loop(config, ros_io=ros_io, mock=args.mock, once=args.once)
         elif config.execution_mode in ("rtc_prefix", "rtc_guidance"):

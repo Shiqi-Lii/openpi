@@ -122,6 +122,32 @@ class NZ100Ros2IO:
         )
         self._publish_grippers(action.left_gripper, action.right_gripper)
 
+    def move_to_home(self) -> None:
+        """Move both arms to the configured startup pose before inference."""
+        left_positions = np.asarray(self.config.left_home_positions, dtype=np.float64)
+        right_positions = np.asarray(self.config.right_home_positions, dtype=np.float64)
+        duration_s = float(self.config.home_time_from_start)
+        if duration_s <= 0:
+            raise ValueError("Home trajectory time must be positive")
+
+        print(f"Moving NZ100 to startup pose: both arms={duration_s:.2f}s, opening both grippers")
+        self._publish_joint_trajectory(
+            self._left_trajectory_pub,
+            list(self.config.left_joint_names),
+            left_positions,
+            duration_s=duration_s,
+        )
+        self._publish_joint_trajectory(
+            self._right_trajectory_pub,
+            list(self.config.right_joint_names),
+            right_positions,
+            duration_s=duration_s,
+        )
+        open_value = float(self.config.modbus_open_value)
+        self._publish_grippers(open_value, open_value)
+        time.sleep(duration_s)
+        print("NZ100 startup pose command completed; starting policy inference.")
+
     def _spin(self) -> None:
         while self._rclpy.ok():
             self._executor.spin_once(timeout_sec=0.1)
@@ -169,7 +195,14 @@ class NZ100Ros2IO:
             )
         return np.asarray([msg.position[name_to_index[name]] for name in joint_names], dtype=np.float32)
 
-    def _publish_joint_trajectory(self, publisher, joint_names: list[str], positions: np.ndarray) -> None:
+    def _publish_joint_trajectory(
+        self,
+        publisher,
+        joint_names: list[str],
+        positions: np.ndarray,
+        *,
+        duration_s: float | None = None,
+    ) -> None:
         from builtin_interfaces.msg import Duration
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -180,7 +213,9 @@ class NZ100Ros2IO:
         msg.joint_names = joint_names
         point = JointTrajectoryPoint()
         point.positions = positions.tolist()
-        duration_s = float(self.config.point_time_from_start)
+        duration_s = float(self.config.point_time_from_start if duration_s is None else duration_s)
+        if duration_s <= 0:
+            raise ValueError(f"Trajectory duration must be positive, got {duration_s}")
         point.time_from_start = Duration(
             sec=int(duration_s),
             nanosec=int((duration_s % 1.0) * 1e9),
@@ -206,19 +241,12 @@ class NZ100Ros2IO:
         self._modbus_gripper_pub.publish(msg)
 
     def _wait_for_first_observation(self, *, require_image: bool = True, require_joint_state: bool = True) -> None:
-        deadline = time.time() + float(self.config.observation_timeout_s)
-        while time.time() < deadline:
+        while True:
             image_ok = self._latest_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             if image_ok and joint_ok:
                 return
             time.sleep(0.05)
-        missing = []
-        if require_image and self._latest_image is None:
-            missing.append(self.config.top_camera_topic)
-        if require_joint_state and self._latest_joint_state is None:
-            missing.append(self.config.joint_state_topic)
-        raise TimeoutError(f"Timed out waiting for ROS topics: {missing}")
 
 
 def _image_msg_to_rgb(msg) -> np.ndarray:

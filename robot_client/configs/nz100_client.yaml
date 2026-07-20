@@ -5,8 +5,17 @@ open_loop_horizon: 32
 max_steps: 0
 point_time_from_start: 0.01
 
+# ===启动回位=======================================================
+# true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
+# false: 不发送回位轨迹，直接启动策略推理。
+home_on_start: true
+left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
+right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+home_time_from_start: 4.0
+# ================================================================
+
 # ===指令===========================================================
-language_instruction: pick up the bottle and place it in the blue box
+language_instruction: Open the blue cylindrical package, put the battery inside, and close the package.
 # ================================================================
 
 # ===执行模式=======================================================
@@ -45,7 +54,6 @@ right_joint_names:
 
 left_trajectory_topic: /arm_left_controller/joint_trajectory
 right_trajectory_topic: /arm_right_controller/joint_trajectory
-observation_timeout_s: 3.0
 
 # Use the same dual-gripper Modbus keys as lerobot_data_collection.
 gripper_state_topic: /robot/api/io/state

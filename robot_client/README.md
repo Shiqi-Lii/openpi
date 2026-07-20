@@ -126,6 +126,10 @@ control_fps: 100
 open_loop_horizon: 32
 max_steps: 0
 point_time_from_start: 0.01
+home_on_start: true
+left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
+right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+home_time_from_start: 4.0
 language_instruction: pick up the bottle and place it in the blue box
 execution_mode: sync_chunk
 rtc_execute_horizon: 8
@@ -143,6 +147,9 @@ rtc_decay_tau: 3.0
 | `open_loop_horizon` | 每次 action chunk 实际执行前多少步 |
 | `max_steps` | 最多执行多少个动作步；`0` 表示一直跑 |
 | `point_time_from_start` | 每个 JointTrajectoryPoint 的到达时间 |
+| `home_on_start` | 是否在启动策略前让双臂回位并打开夹爪；默认 `true` |
+| `left_home_positions` / `right_home_positions` | 左右臂启动回位的 7 关节目标位置 |
+| `home_time_from_start` | 左右臂共用的启动回位轨迹时间；等待该时间后开始推理 |
 | `language_instruction` | 发给模型的语言指令 |
 | `execution_mode` | 推理方式选择：`sync_chunk` / `rtc_prefix` / `rtc_guidance` |
 | `rtc_execute_horizon` | RTC 每次从当前 chunk 实际执行多少步 |
@@ -159,6 +166,16 @@ execution_mode: rtc_guidance
 ```
 
 `sync_chunk` 是普通 OpenPI chunk 推理；`rtc_prefix` 会硬锁上一段 action 前缀；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。默认配置仍是 `sync_chunk`，不启用 RTC 时不会影响普通推理。
+
+启动和运行过程中，如果相机或关节状态还没到达，client 会一直等待对应 ROS2 topic 的第一帧数据。
+
+如需启动时先回位再执行策略，在配置文件中设置：
+
+```yaml
+home_on_start: true
+```
+
+程序会同时发布左右臂回位轨迹和一次双夹爪打开命令。左右臂共用 4 秒到达时间，等待 4 秒后才进行第一次策略推理。设置为 `false` 可跳过启动回位和这次夹爪命令。
 
 ## 夹爪模式
 
