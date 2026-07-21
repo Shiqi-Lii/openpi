@@ -37,6 +37,7 @@ class Ros2Config:
     """ROS 2 topics and robot IO settings for NZ100."""
 
     top_camera_topic: str = "/top/image_raw"
+    wrist_left_camera_topic: str = "/wrist_left/image_raw"
     joint_state_topic: str = "/joint_states"
     left_trajectory_topic: str = "/arm_left_controller/joint_trajectory"
     right_trajectory_topic: str = "/arm_right_controller/joint_trajectory"
@@ -149,6 +150,7 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
     keys = {
         "point_time_from_start",
         "top_camera_topic",
+        "wrist_left_camera_topic",
         "joint_state_topic",
         "left_trajectory_topic",
         "right_trajectory_topic",

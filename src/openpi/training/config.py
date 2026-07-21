@@ -289,7 +289,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotNZ100DataConfig(DataConfigFactory):
-    """Data configuration for the dual-arm NZ100 with one top camera."""
+    """Data configuration for the dual-arm NZ100 with top and left-wrist cameras."""
 
     use_delta_joint_actions: bool = True
     default_prompt: str | None = None
@@ -299,7 +299,10 @@ class LeRobotNZ100DataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "images": {"cam_high": "observation.images.top"},
+                        "images": {
+                            "cam_high": "observation.images.top",
+                            "cam_left_wrist": "observation.images.wrist_left",
+                        },
                         "state": "observation.state",
                         "actions": "action",
                         "prompt": "prompt",

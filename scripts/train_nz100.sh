@@ -3,8 +3,8 @@ set -euo pipefail
 # Run with: bash scripts/train_nz100.sh
 
 # Modify these values for your training run.
-DATA_REPO_ID="/mnt/16T/lisq5005_dir/openpi/data/data_cylindrical_package"
-EXP_NAME="nz100_v1"
+DATA_REPO_ID="/mnt/16T/lisq5005_dir/openpi/data/data_open_close_package"
+EXP_NAME="nz100_v2_open_close_package"
 GPU_ID="0"
 NUM_TRAIN_STEPS="30000"
 BATCH_SIZE="32"

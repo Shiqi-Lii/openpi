@@ -26,6 +26,10 @@ def read_mock_top_image() -> np.ndarray:
     return np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8)
 
 
+def read_mock_wrist_left_image() -> np.ndarray:
+    return np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8)
+
+
 def read_mock_robot_state() -> NZ100RobotState:
     return NZ100RobotState(
         left_joints=np.zeros((7,), dtype=np.float32),
@@ -111,10 +115,13 @@ def main() -> None:
             ros_io.disconnect()
 
 
-def _read_observation(ros_io: NZ100Ros2IO | None, *, mock: bool) -> tuple[np.ndarray, NZ100RobotState]:
+def _read_observation(
+    ros_io: NZ100Ros2IO | None, *, mock: bool
+) -> tuple[np.ndarray, np.ndarray, NZ100RobotState]:
     top_image = read_mock_top_image() if mock else ros_io.get_top_image()
+    wrist_left_image = read_mock_wrist_left_image() if mock else ros_io.get_wrist_left_image()
     robot_state = read_mock_robot_state() if mock else ros_io.get_robot_state()
-    return top_image, robot_state
+    return top_image, wrist_left_image, robot_state
 
 
 def _execute_action_chunk(
@@ -147,10 +154,12 @@ def _run_sync_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bo
 
     while True:
         print(f"Reading observation before request; executed_steps={executed_steps}")
-        top_image, robot_state = _read_observation(ros_io, mock=mock)
+        top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
         print(f"Requesting action chunk from OpenPI server; state={_format_state(robot_state)}")
         tic = time.time()
-        action_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+        action_chunk = client.infer(
+            top_image=top_image, wrist_left_image=wrist_left_image, robot_state=robot_state
+        )
         print(
             "Received action chunk: "
             f"shape={tuple(action_chunk.shape)}, latency={time.time() - tic:.3f}s"
@@ -182,10 +191,12 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
     print(f"Entering {config.execution_mode} control loop.")
 
     print("Reading initial observation for RTC.")
-    top_image, robot_state = _read_observation(ros_io, mock=mock)
+    top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
     print(f"Requesting initial RTC action chunk; state={_format_state(robot_state)}")
     tic = time.time()
-    current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+    current_chunk = client.infer(
+        top_image=top_image, wrist_left_image=wrist_left_image, robot_state=robot_state
+    )
     print(
         "Received initial RTC chunk: "
         f"shape={tuple(current_chunk.shape)}, latency={time.time() - tic:.3f}s"
@@ -199,7 +210,9 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
             if execute_horizon <= 0:
                 raise ValueError("rtc_execute_horizon must be positive")
 
-            next_top_image, next_robot_state = _read_observation(ros_io, mock=mock)
+            next_top_image, next_wrist_left_image, next_robot_state = _read_observation(
+                ros_io, mock=mock
+            )
             print(
                 "Requesting next RTC chunk in background: "
                 f"executed_steps={executed_steps}, state={_format_state(next_robot_state)}"
@@ -207,6 +220,7 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
             next_future = executor.submit(
                 client.infer,
                 top_image=next_top_image,
+                wrist_left_image=next_wrist_left_image,
                 robot_state=next_robot_state,
                 previous_chunk=current_chunk,
             )

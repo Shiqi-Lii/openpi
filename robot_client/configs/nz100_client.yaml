@@ -1,7 +1,7 @@
 # policy_host: 172.22.1.127
 policy_host: 192.168.168.150
 policy_port: 8000
-control_fps: 50
+control_fps: 30
 open_loop_horizon: 50
 max_steps: 0
 point_time_from_start: 0.1
@@ -11,6 +11,7 @@ point_time_from_start: 0.1
 # false: 不发送回位轨迹，直接启动策略推理。
 home_on_start: true
 left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
+# left_home_positions: [0.36, 0.36, -0.01, 1.92, -1.57, 0.00, 1.8]
 right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
 home_time_from_start: 4.0
 # ================================================================
@@ -27,13 +28,14 @@ language_instruction: Open the blue cylindrical package, and close the package.
 execution_mode: rtc_prefix
 
 # RTC 参数只在 execution_mode 为 rtc_prefix / rtc_guidance 时生效。
-rtc_execute_horizon: 10
-rtc_prefix_len: 8
+rtc_execute_horizon: 30
+rtc_prefix_len: 6
 rtc_guidance_weight: 5.0
 rtc_decay_tau: 3.0
 # ================================================================
 
 top_camera_topic: /top/image_raw
+wrist_left_camera_topic: /wrist_left/image_raw
 joint_state_topic: /joint_states
 
 left_joint_names:
