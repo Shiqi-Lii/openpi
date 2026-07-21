@@ -290,7 +290,7 @@ class Pi0(_model.BaseModel):
             self.action_horizon,
             jnp.maximum(0, rtc_prefix_len if rtc_prefix_len is not None else self.action_horizon),
         )
-        prefix_mask = (jnp.arange(self.action_horizon) < prefix_len)[None, :, None]
+        rtc_action_mask = (jnp.arange(self.action_horizon) < prefix_len)[None, :, None]
         prev_actions = rtc_prev_actions[:, : self.action_horizon, : self.action_dim]
         prev_actions = jnp.pad(
             prev_actions,
@@ -303,10 +303,10 @@ class Pi0(_model.BaseModel):
 
         def prefix_step(carry):
             x_t, time = carry
-            x_t = jnp.where(prefix_mask, prev_actions, x_t)
+            x_t = jnp.where(rtc_action_mask, prev_actions, x_t)
             v_t = denoise(x_t, time)
             x_t = x_t + dt * v_t
-            x_t = jnp.where(prefix_mask, prev_actions, x_t)
+            x_t = jnp.where(rtc_action_mask, prev_actions, x_t)
             return x_t, time + dt
 
         def guidance_weights():
@@ -336,5 +336,5 @@ class Pi0(_model.BaseModel):
             return jax.lax.switch(method_index, (prefix_step, guidance_step), carry)
 
         x_0, _ = jax.lax.while_loop(cond, rtc_step, (noise, 1.0))
-        x_0 = jax.lax.cond(method_id == 1, lambda x: jnp.where(prefix_mask, prev_actions, x), lambda x: x, x_0)
+        x_0 = jax.lax.cond(method_id == 1, lambda x: jnp.where(rtc_action_mask, prev_actions, x), lambda x: x, x_0)
         return x_0

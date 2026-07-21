@@ -1,9 +1,10 @@
-policy_host: 172.22.1.127
+# policy_host: 172.22.1.127
+policy_host: 192.168.168.150
 policy_port: 8000
-control_fps: 100
-open_loop_horizon: 32
+control_fps: 50
+open_loop_horizon: 50
 max_steps: 0
-point_time_from_start: 0.01
+point_time_from_start: 0.1
 
 # ===启动回位=======================================================
 # true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
@@ -15,7 +16,7 @@ home_time_from_start: 4.0
 # ================================================================
 
 # ===指令===========================================================
-language_instruction: Open the blue cylindrical package, put the battery inside, and close the package.
+language_instruction: Open the blue cylindrical package, and close the package.
 # ================================================================
 
 # ===执行模式=======================================================
@@ -23,11 +24,11 @@ language_instruction: Open the blue cylindrical package, put the battery inside,
 #   sync_chunk   普通 OpenPI chunk 推理
 #   rtc_prefix   RTC 硬锁前缀
 #   rtc_guidance RTC soft guidance
-execution_mode: sync_chunk
+execution_mode: rtc_prefix
 
 # RTC 参数只在 execution_mode 为 rtc_prefix / rtc_guidance 时生效。
-rtc_execute_horizon: 8
-rtc_prefix_len: 5
+rtc_execute_horizon: 10
+rtc_prefix_len: 8
 rtc_guidance_weight: 5.0
 rtc_decay_tau: 3.0
 # ================================================================
