@@ -35,9 +35,9 @@ class NZ100RTCClient:
     """OpenPI websocket client with optional RTC context per inference call."""
 
     def __init__(self, config: ClientConfig) -> None:
-        if config.execution_mode not in ("rtc_prefix", "rtc_guidance"):
+        if config.execution_mode != "rtc_guidance":
             raise ValueError(
-                "NZ100RTCClient requires execution_mode to be 'rtc_prefix' or 'rtc_guidance', "
+                "NZ100RTCClient requires execution_mode to be 'rtc_guidance', "
                 f"got {config.execution_mode!r}"
             )
         self._config = config
@@ -114,11 +114,10 @@ class NZ100RTCClient:
         elif previous_chunk.shape[0] > target_horizon:
             previous_chunk = previous_chunk[:target_horizon]
 
-        method = "prefix" if self._config.execution_mode == "rtc_prefix" else "guidance"
         return RTCContext(
             prev_actions=build_raw_action_chunk(previous_chunk),
             prefix_len=prefix_len,
-            method=method,
+            method="guidance",
             guidance_weight=float(self._config.rtc_guidance_weight),
             decay_tau=float(self._config.rtc_decay_tau),
             decay_end=self._config.rtc_decay_end,

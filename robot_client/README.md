@@ -132,6 +132,7 @@ right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
 home_time_from_start: 4.0
 language_instruction: pick up the bottle and place it in the blue box
 execution_mode: sync_chunk
+action_refill_threshold: 6
 rtc_execute_horizon: 8
 rtc_prefix_len: 5
 rtc_guidance_weight: 5.0
@@ -155,7 +156,8 @@ rtc_max_delay_steps: null
 | `left_home_positions` / `right_home_positions` | 左右臂启动回位的 7 关节目标位置 |
 | `home_time_from_start` | 左右臂共用的启动回位轨迹时间；等待该时间后开始推理 |
 | `language_instruction` | 发给模型的语言指令 |
-| `execution_mode` | 推理方式选择：`sync_chunk` / `rtc_prefix` / `rtc_guidance` |
+| `execution_mode` | 推理方式选择：`sync_chunk` / `async_queue` / `rtc_guidance` |
+| `action_refill_threshold` | `async_queue` 队列低水位；队列长度小于等于该值时异步预取下一段 chunk |
 | `rtc_execute_horizon` | RTC 的最小执行步数 `s_min`；当前 chunk 至少执行到该步数后，后台才启动下一次推理 |
 | `rtc_prefix_len` | RTC 使用上一段 chunk 前缀约束的步数 |
 | `rtc_guidance_weight` | `rtc_guidance` 的引导强度 |
@@ -169,11 +171,11 @@ rtc_max_delay_steps: null
 
 ```yaml
 execution_mode: sync_chunk
-execution_mode: rtc_prefix
+execution_mode: async_queue
 execution_mode: rtc_guidance
 ```
 
-`sync_chunk` 是普通 OpenPI chunk 推理；`rtc_prefix` 会硬锁上一段 action 前缀；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。RTC 使用一个控制线程和一个后台推理线程：控制线程按 `control_fps` 每次只执行当前 chunk 的一个动作；后台线程在 `t >= s_min` 后读取当前剩余 chunk，按最近推理延迟估计 `d`，生成新 chunk 后立刻原子切换。不启用 RTC 时不会影响普通推理。
+`sync_chunk` 是普通 OpenPI chunk 推理；`async_queue` 会维护一个本地动作队列，队列低于 `action_refill_threshold` 时异步拉取下一段 chunk；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。RTC 使用一个控制线程和一个后台推理线程：控制线程按 `control_fps` 每次只执行当前 chunk 的一个动作；后台线程在 `t >= s_min` 后读取当前剩余 chunk，按最近推理延迟估计 `d`，生成新 chunk 后立刻原子切换。不启用 RTC 时不会影响普通推理。
 
 启动和运行过程中，如果相机、关节状态或双夹爪状态还没到达，client 会一直等待对应 ROS2 topic 的第一帧数据。
 
@@ -199,4 +201,14 @@ modbus_closed_value: 2
 
 这和训练数据保持一致：client 发给模型的 state 夹爪值是 `1/2`，模型返回的 action 夹爪值也按 `1/2` 离散化后下发。
 
-RTC 推理逻辑单独放在 `rtc_client.py`，普通同步逻辑仍在 `sync_client.py`，两条路径通过 `execution_mode` 选择。
+通信 client 和执行 runner 是分开的：
+
+```text
+sync_client.py              # 普通 OpenPI 请求
+rtc_client.py               # 带 RTC 上下文的 OpenPI 请求
+runners/sync_chunk.py       # 普通 chunk 执行
+runners/async_queue.py      # 动作队列异步预取执行
+runners/rtc_guidance.py     # RTC guidance 执行
+```
+
+`main.py` 只负责读取配置、连接 ROS2，并根据 `execution_mode` 分发到对应 runner。

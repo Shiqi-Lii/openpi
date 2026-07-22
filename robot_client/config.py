@@ -19,13 +19,14 @@ class ClientConfig:
     open_loop_horizon: int = 32
     max_steps: int = 0
     execution_mode: str = "sync_chunk"
+    action_refill_threshold: int = 6
 
     # For normal chunk execution, the client requests one action chunk, then
     # executes actions from that chunk locally before asking the server again.
     execute_full_chunk: bool = True
 
     # Real-Time Chunking settings. These are only used when
-    # ``execution_mode`` is ``rtc_prefix`` or ``rtc_guidance``.
+    # ``execution_mode`` is ``rtc_guidance``.
     rtc_execute_horizon: int = 8
     rtc_prefix_len: int = 5
     rtc_guidance_weight: float = 5.0
@@ -136,6 +137,7 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "control_fps": "control_hz",
         "open_loop_horizon": "open_loop_horizon",
         "max_steps": "max_steps",
+        "action_refill_threshold": "action_refill_threshold",
         "language_instruction": "prompt",
         "execution_mode": "execution_mode",
         "rtc_execute_horizon": "rtc_execute_horizon",
@@ -148,9 +150,6 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "rtc_max_delay_steps": "rtc_max_delay_steps",
     }
     result = {target: data[source] for source, target in mapping.items() if source in data}
-    if result.get("execution_mode") == "async_queue":
-        # Backward-compatible alias for the normal synchronous chunk mode.
-        result["execution_mode"] = "sync_chunk"
     return result
 
 
@@ -190,8 +189,6 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 def _filter_dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
     valid = {field.name for field in dataclasses.fields(cls)}
     result = {key: _maybe_tuple(value) for key, value in data.items() if key in valid}
-    if result.get("execution_mode") == "async_queue":
-        result["execution_mode"] = "sync_chunk"
     return result
 
 

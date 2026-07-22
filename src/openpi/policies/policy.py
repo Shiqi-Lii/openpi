@@ -131,21 +131,16 @@ class Policy(BasePolicy):
         rtc_inputs = self._input_transform(rtc_inputs)
         prev_actions = jnp.asarray(rtc_inputs["actions"])[np.newaxis, ...]
 
-        method = rtc.get("method", "prefix")
-        if method == "prefix":
-            method_id = 1
-        elif method == "guidance":
-            method_id = 2
-            if rtc.get("decay_end") is None:
-                raise ValueError("_rtc.decay_end is required when _rtc.method='guidance'")
-        else:
+        method = rtc.get("method", "guidance")
+        if method != "guidance":
             raise ValueError(f"Unsupported RTC method: {method!r}")
+        if rtc.get("decay_end") is None:
+            raise ValueError("_rtc.decay_end is required when _rtc.method='guidance'")
 
         decay_end = 0 if rtc.get("decay_end") is None else int(rtc["decay_end"])
         sample_kwargs = {
             "rtc_prev_actions": prev_actions,
             "rtc_prefix_len": jnp.asarray(int(rtc.get("prefix_len", prev_actions.shape[-2])), dtype=jnp.int32),
-            "rtc_method_id": jnp.asarray(method_id, dtype=jnp.int32),
             "rtc_guidance_weight": jnp.asarray(float(rtc.get("guidance_weight", 5.0)), dtype=jnp.float32),
             "rtc_decay_tau": jnp.asarray(float(rtc.get("decay_tau", 3.0)), dtype=jnp.float32),
             "rtc_decay_end": jnp.asarray(decay_end, dtype=jnp.int32),

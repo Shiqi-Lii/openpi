@@ -223,7 +223,6 @@ class Pi0(_model.BaseModel):
         noise: at.Float[at.Array, "b ah ad"] | None = None,
         rtc_prev_actions: at.Float[at.Array, "b ah ad"] | None = None,
         rtc_prefix_len: at.Int[at.Array, ""] | None = None,
-        rtc_method_id: at.Int[at.Array, ""] | None = None,
         rtc_guidance_weight: at.Float[at.Array, ""] | None = None,
         rtc_decay_tau: at.Float[at.Array, ""] | None = None,
         rtc_decay_end: at.Int[at.Array, ""] | None = None,
@@ -292,7 +291,6 @@ class Pi0(_model.BaseModel):
             self.action_horizon,
             jnp.maximum(0, rtc_prefix_len if rtc_prefix_len is not None else self.action_horizon),
         )
-        rtc_action_mask = (jnp.arange(self.action_horizon) < prefix_len)[None, :, None]
         prev_actions = rtc_prev_actions[:, : self.action_horizon, : self.action_dim]
         prev_actions = jnp.pad(
             prev_actions,
@@ -302,14 +300,6 @@ class Pi0(_model.BaseModel):
                 (0, self.action_dim - prev_actions.shape[2]),
             ),
         )
-
-        def prefix_step(carry):
-            x_t, time = carry
-            x_t = jnp.where(rtc_action_mask, prev_actions, x_t)
-            v_t = denoise(x_t, time)
-            x_t = x_t + dt * v_t
-            x_t = jnp.where(rtc_action_mask, prev_actions, x_t)
-            return x_t, time + dt
 
         def guidance_weights():
             positions = jnp.arange(self.action_horizon)
@@ -355,12 +345,5 @@ class Pi0(_model.BaseModel):
                 v_t = vjp_guidance((v_t, action_estimate))
             return x_t + dt * v_t, time + dt
 
-        method_id = rtc_method_id if rtc_method_id is not None else jnp.asarray(1, dtype=jnp.int32)
-        method_index = jnp.clip(method_id - 1, 0, 1)
-
-        def rtc_step(carry):
-            return jax.lax.switch(method_index, (prefix_step, guidance_step), carry)
-
-        x_0, _ = jax.lax.while_loop(cond, rtc_step, (noise, 1.0))
-        x_0 = jax.lax.cond(method_id == 1, lambda x: jnp.where(rtc_action_mask, prev_actions, x), lambda x: x, x_0)
+        x_0, _ = jax.lax.while_loop(cond, guidance_step, (noise, 1.0))
         return x_0
