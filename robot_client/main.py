@@ -6,8 +6,9 @@ The mock mode is safe for checking network/model connectivity.
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
+import collections
 import dataclasses
+import threading
 import time
 from pathlib import Path
 
@@ -28,9 +29,16 @@ class RTCActionContext:
     """Timing and action chunk state needed for real-time chunking."""
 
     raw_chunk: np.ndarray
-    inference_start_s: float
-    inference_elapsed_s: float
-    action_timestamp_s: float
+    step_index: int = 0
+
+
+@dataclasses.dataclass
+class RTCSharedState:
+    """Mutex-protected RTC state shared by controller and inference threads."""
+
+    ctx: RTCActionContext
+    stop: bool = False
+    error: BaseException | None = None
 
 
 def read_mock_top_image() -> np.ndarray:
@@ -94,6 +102,7 @@ def main() -> None:
         rtc_decay_tau=client_base.rtc_decay_tau,
         rtc_decay_end=client_base.rtc_decay_end,
         rtc_use_vjp=client_base.rtc_use_vjp,
+        rtc_delay_buffer_size=client_base.rtc_delay_buffer_size,
     )
 
     print(
@@ -160,43 +169,10 @@ def _execute_action_chunk(
     return executed_steps
 
 
-def _resample_remaining(sequence: np.ndarray, offset: float) -> np.ndarray:
-    """Linearly interpolate the remaining chunk from a fractional timestep offset."""
-    sequence = np.asarray(sequence, dtype=np.float32)
-    if sequence.ndim != 2:
-        raise ValueError(f"Expected action chunk with shape (T, D), got {sequence.shape}")
-
-    offset = max(float(offset), 0.0)
-    length = sequence.shape[0]
-    remaining_len = length - int(offset)
-    if remaining_len <= 0:
-        return sequence[:0]
-
-    indices = np.clip(offset + np.arange(remaining_len, dtype=np.float32), 0.0, float(length - 1))
-    lo = np.floor(indices).astype(np.int64)
-    hi = np.minimum(lo + 1, length - 1)
-    alpha = (indices - lo)[:, None]
-    return sequence[lo] + alpha * (sequence[hi] - sequence[lo])
-
-
 def _steps_from_elapsed(elapsed_s: float, control_hz: float) -> int:
     if control_hz <= 0:
         return 0
     return max(0, int(elapsed_s * control_hz))
-
-
-def _compute_rtc_prefix_len(config: ClientConfig, inference_elapsed_s: float, remaining_len: int) -> int:
-    if remaining_len <= 0:
-        return 0
-    configured = int(config.rtc_prefix_len)
-    latency_steps = _steps_from_elapsed(inference_elapsed_s, config.control_hz)
-    prefix_len = max(configured, latency_steps)
-    return min(prefix_len, remaining_len)
-
-
-def _remaining_from_context(ctx: RTCActionContext, *, now_s: float, control_hz: float) -> np.ndarray:
-    offset = (now_s - ctx.action_timestamp_s) * control_hz if control_hz > 0 else 0.0
-    return _resample_remaining(ctx.raw_chunk, offset)
 
 
 def _run_sync_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
@@ -241,111 +217,166 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
     client = NZ100RTCClient(config)
     executed_steps = 0
     print(f"Entering {config.execution_mode} control loop.")
+    if config.control_hz <= 0:
+        raise ValueError(f"control_hz must be positive for RTC, got {config.control_hz}")
 
     print("Reading initial observation for RTC.")
     top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
     print(f"Requesting initial RTC action chunk; state={_format_state(robot_state)}")
-    inference_start_s = time.time()
+    inference_start_s = time.monotonic()
     current_chunk = client.infer(
         top_image=top_image, wrist_left_image=wrist_left_image, robot_state=robot_state
     )
-    inference_elapsed_s = time.time() - inference_start_s
+    inference_elapsed_s = time.monotonic() - inference_start_s
     print(
         "Received initial RTC chunk: "
         f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
     )
     if config.open_loop_horizon > 0:
         current_chunk = current_chunk[: config.open_loop_horizon]
-    ctx = RTCActionContext(
-        raw_chunk=current_chunk,
-        inference_start_s=inference_start_s,
-        inference_elapsed_s=inference_elapsed_s,
-        action_timestamp_s=time.time(),
+    if current_chunk.shape[0] == 0:
+        raise ValueError("Initial RTC action chunk is empty")
+
+    condition = threading.Condition()
+    shared = RTCSharedState(ctx=RTCActionContext(raw_chunk=current_chunk, step_index=0))
+    delay_buffer = collections.deque(
+        [_steps_from_elapsed(inference_elapsed_s, config.control_hz)],
+        maxlen=max(1, int(config.rtc_delay_buffer_size)),
     )
+    inference_thread = threading.Thread(
+        target=_rtc_inference_loop,
+        args=(config, client, ros_io, mock, shared, condition, delay_buffer),
+        daemon=True,
+    )
+    inference_thread.start()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    period_s = 1.0 / config.control_hz
+    next_tick = time.monotonic()
+    try:
         while True:
-            current_chunk = _remaining_from_context(ctx, now_s=time.time(), control_hz=config.control_hz)
-            execute_horizon = min(int(config.rtc_execute_horizon), current_chunk.shape[0])
-            if execute_horizon <= 0:
-                print("Current RTC chunk is exhausted; requesting a fresh chunk.")
-                top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
-                inference_start_s = time.time()
-                current_chunk = client.infer(
-                    top_image=top_image,
-                    wrist_left_image=wrist_left_image,
-                    robot_state=robot_state,
-                )
-                inference_elapsed_s = time.time() - inference_start_s
-                if config.open_loop_horizon > 0:
-                    current_chunk = current_chunk[: config.open_loop_horizon]
-                ctx = RTCActionContext(
-                    raw_chunk=current_chunk,
-                    inference_start_s=inference_start_s,
-                    inference_elapsed_s=inference_elapsed_s,
-                    action_timestamp_s=time.time(),
-                )
-                continue
+            with condition:
+                if shared.error is not None:
+                    raise RuntimeError("RTC background inference failed") from shared.error
+                ctx = shared.ctx
+                if ctx.step_index < ctx.raw_chunk.shape[0]:
+                    raw_action = np.asarray(ctx.raw_chunk[ctx.step_index], dtype=np.float32)
+                    ctx.step_index += 1
+                    local_step_index = ctx.step_index
+                    condition.notify_all()
+                else:
+                    raw_action = np.asarray(ctx.raw_chunk[-1], dtype=np.float32)
+                    local_step_index = ctx.step_index
+                    condition.notify_all()
+                    print("RTC chunk exhausted before replacement; holding last action.")
 
-            next_top_image, next_wrist_left_image, next_robot_state = _read_observation(
-                ros_io, mock=mock
-            )
-            next_inference_start_s = time.time()
-            remaining_for_guidance = _remaining_from_context(
-                ctx, now_s=next_inference_start_s, control_hz=config.control_hz
-            )
-            prefix_len = _compute_rtc_prefix_len(
-                config, ctx.inference_elapsed_s, remaining_for_guidance.shape[0]
-            )
+            action = discretize_plc_grippers(split_action(raw_action))
             print(
-                "Requesting next RTC chunk in background: "
-                f"executed_steps={executed_steps}, "
-                f"remaining={remaining_for_guidance.shape[0]}, "
-                f"prefix_len={prefix_len}, "
-                f"state={_format_state(next_robot_state)}"
+                f"Executing RTC action[{executed_steps}] "
+                f"chunk_step={local_step_index}: {_format_action(action)}"
             )
-            next_future = executor.submit(
-                client.infer,
-                top_image=next_top_image,
-                wrist_left_image=next_wrist_left_image,
-                robot_state=next_robot_state,
-                previous_chunk=remaining_for_guidance,
-                prefix_len=prefix_len,
-            )
+            if mock:
+                print(action)
+            else:
+                ros_io.apply_action(action)
 
-            to_execute = current_chunk[:execute_horizon]
-            executed_steps = _execute_action_chunk(
-                to_execute,
-                config=config,
-                ros_io=ros_io,
-                mock=mock,
-                executed_steps=executed_steps,
-            )
+            executed_steps += 1
             if config.max_steps > 0 and executed_steps >= config.max_steps:
                 print(f"Reached max_steps={config.max_steps}; stopping.")
                 return
             if once:
-                print("--once enabled; stopping after one RTC execution window.")
+                print("--once enabled; stopping after one RTC action.")
                 return
 
-            current_chunk = next_future.result()
-            inference_elapsed_s = time.time() - next_inference_start_s
+            next_tick += period_s
+            sleep_s = next_tick - time.monotonic()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            else:
+                next_tick = time.monotonic()
+    finally:
+        with condition:
+            shared.stop = True
+            condition.notify_all()
+        inference_thread.join(timeout=2.0)
+
+
+def _rtc_inference_loop(
+    config: ClientConfig,
+    client: NZ100RTCClient,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+    shared: RTCSharedState,
+    condition: threading.Condition,
+    delay_buffer: collections.deque[int],
+) -> None:
+    """Background inference loop following RTC Algorithm 1's t/s/d structure."""
+
+    minimum_execution_horizon = max(1, int(config.rtc_execute_horizon))
+    while True:
+        with condition:
+            condition.wait_for(
+                lambda: shared.stop
+                or shared.error is not None
+                or shared.ctx.step_index >= minimum_execution_horizon
+                or shared.ctx.step_index >= shared.ctx.raw_chunk.shape[0]
+            )
+            if shared.error is not None:
+                return
+            if shared.stop:
+                return
+
+            start_step = int(shared.ctx.step_index)
+            previous_chunk = np.asarray(shared.ctx.raw_chunk[start_step:], dtype=np.float32).copy()
+            predicted_delay_steps = max(max(delay_buffer), int(config.rtc_prefix_len))
+
+        try:
+            top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
+            prefix_len = min(predicted_delay_steps, previous_chunk.shape[0])
+            previous_for_rtc = previous_chunk if prefix_len > 0 else None
             print(
-                "Received next RTC chunk: "
-                f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
+                "RTC background inference start: "
+                f"s={start_step}, remaining={previous_chunk.shape[0]}, "
+                f"d={predicted_delay_steps}, prefix_len={prefix_len}, "
+                f"state={_format_state(robot_state)}"
             )
-            if config.open_loop_horizon > 0:
-                current_chunk = current_chunk[: config.open_loop_horizon]
-            skip_steps = _steps_from_elapsed(inference_elapsed_s, config.control_hz)
-            if skip_steps > 0:
-                print(f"Skipping {skip_steps} expired RTC actions from new chunk.")
-            current_chunk = current_chunk[skip_steps:]
-            ctx = RTCActionContext(
-                raw_chunk=current_chunk,
-                inference_start_s=next_inference_start_s,
-                inference_elapsed_s=inference_elapsed_s,
-                action_timestamp_s=time.time(),
+            tic = time.monotonic()
+            new_chunk = client.infer(
+                top_image=top_image,
+                wrist_left_image=wrist_left_image,
+                robot_state=robot_state,
+                previous_chunk=previous_for_rtc,
+                prefix_len=prefix_len,
             )
+        except BaseException as exc:
+            with condition:
+                shared.error = exc
+                shared.stop = True
+                condition.notify_all()
+            return
+        inference_elapsed_s = time.monotonic() - tic
+        observed_delay_steps = max(1, _steps_from_elapsed(inference_elapsed_s, config.control_hz))
+        if config.open_loop_horizon > 0:
+            new_chunk = new_chunk[: config.open_loop_horizon]
+        if new_chunk.shape[0] == 0:
+            print("RTC background inference returned an empty chunk; keeping current chunk.")
+            continue
+
+        with condition:
+            if shared.stop:
+                return
+            current_step = int(shared.ctx.step_index)
+            new_step_index = max(0, current_step - start_step)
+            if new_step_index >= new_chunk.shape[0]:
+                new_step_index = new_chunk.shape[0] - 1
+            shared.ctx = RTCActionContext(raw_chunk=new_chunk, step_index=new_step_index)
+            delay_buffer.append(observed_delay_steps)
+            condition.notify_all()
+
+        print(
+            "RTC background inference done: "
+            f"latency={inference_elapsed_s:.3f}s, observed_delay={observed_delay_steps}, "
+            f"new_step_index={new_step_index}, delay_buffer={list(delay_buffer)}"
+        )
 
 
 def _format_state(state: NZ100RobotState) -> str:
