@@ -12,6 +12,8 @@ from robot_client.config import ClientConfig
 from robot_client.ros2_io import NZ100Ros2IO
 from robot_client.runners.common import format_action
 from robot_client.runners.common import infer_sync_chunk
+from robot_client.runners.common import read_observation
+from robot_client.state_builder import NZ100RobotState
 from robot_client.state_builder import discretize_plc_grippers
 from robot_client.state_builder import split_action
 from robot_client.sync_client import NZ100SyncClient
@@ -38,12 +40,16 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
     if not action_queue:
         raise RuntimeError("Policy returned empty action chunk.")
 
-    def submit_prefetch(executor: concurrent.futures.ThreadPoolExecutor) -> concurrent.futures.Future[np.ndarray]:
+    def submit_prefetch(
+        executor: concurrent.futures.ThreadPoolExecutor,
+        queued_actions: list[np.ndarray],
+    ) -> concurrent.futures.Future[np.ndarray]:
         return executor.submit(
-            infer_sync_chunk,
+            _infer_projected_sync_chunk,
             worker_client,
             config,
             ros_io,
+            queued_actions,
             mock=mock,
             log_prefix="[async-prefetch] ",
         )
@@ -51,7 +57,7 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
     period_s = 1.0 / config.control_hz
     next_tick = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="async_queue") as executor:
-        pending_future: concurrent.futures.Future[np.ndarray] | None = submit_prefetch(executor)
+        pending_future: concurrent.futures.Future[np.ndarray] | None = submit_prefetch(executor, list(action_queue))
         while True:
             if pending_future is not None and pending_future.done():
                 prefetched_chunk = pending_future.result()
@@ -62,7 +68,7 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
 
             if len(action_queue) <= refill_threshold and pending_future is None:
                 print(f"Queue low ({len(action_queue)} <= {refill_threshold}); starting async prefetch.")
-                pending_future = submit_prefetch(executor)
+                pending_future = submit_prefetch(executor, list(action_queue))
 
             if action_queue:
                 raw_action = action_queue.popleft()
@@ -98,3 +104,37 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
             else:
                 next_tick = time.monotonic()
 
+
+def _infer_projected_sync_chunk(
+    client: NZ100SyncClient,
+    config: ClientConfig,
+    ros_io: NZ100Ros2IO | None,
+    queued_actions: list[np.ndarray],
+    *,
+    mock: bool,
+    log_prefix: str = "",
+) -> np.ndarray:
+    top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
+    if queued_actions:
+        robot_state = _project_robot_state_to_queue_tail(robot_state, queued_actions[-1])
+        print(f"{log_prefix}Projected state to queued tail before prefetch.")
+
+    action_chunk = client.infer(
+        top_image=top_image,
+        wrist_left_image=wrist_left_image,
+        robot_state=robot_state,
+    )
+    print(f"{log_prefix}Received action chunk: shape={tuple(action_chunk.shape)}")
+    if config.open_loop_horizon > 0:
+        action_chunk = action_chunk[: config.open_loop_horizon]
+    return action_chunk
+
+
+def _project_robot_state_to_queue_tail(robot_state: NZ100RobotState, tail_action: np.ndarray) -> NZ100RobotState:
+    tail = split_action(tail_action)
+    return NZ100RobotState(
+        left_joints=np.asarray(tail.left_joints, dtype=np.float32),
+        right_joints=np.asarray(tail.right_joints, dtype=np.float32),
+        left_gripper=float(tail.left_gripper),
+        right_gripper=float(tail.right_gripper),
+    )
