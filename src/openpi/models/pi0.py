@@ -226,6 +226,8 @@ class Pi0(_model.BaseModel):
         rtc_method_id: at.Int[at.Array, ""] | None = None,
         rtc_guidance_weight: at.Float[at.Array, ""] | None = None,
         rtc_decay_tau: at.Float[at.Array, ""] | None = None,
+        rtc_decay_end: at.Int[at.Array, ""] | None = None,
+        rtc_use_vjp: at.Bool[at.Array, ""] | None = None,
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
@@ -312,9 +314,12 @@ class Pi0(_model.BaseModel):
         def guidance_weights():
             positions = jnp.arange(self.action_horizon)
             locked = positions < prefix_len
+            decay_end = rtc_decay_end if rtc_decay_end is not None else 0
+            decay_end = jnp.where(decay_end > prefix_len, decay_end, jnp.minimum(self.action_horizon, prefix_len * 2))
             tau = jnp.maximum(rtc_decay_tau if rtc_decay_tau is not None else 3.0, 1e-6)
-            decay = jnp.exp(-jnp.maximum(positions - prefix_len + 1, 0) / tau)
-            weights = jnp.where(locked, 1.0, decay)
+            decay = jnp.exp(-jnp.maximum(positions - prefix_len, 0) / tau)
+            in_decay = (positions >= prefix_len) & (positions < decay_end)
+            weights = jnp.where(locked, 1.0, jnp.where(in_decay, decay, 0.0))
             return weights[None, :, None]
 
         def guidance_step(carry):
@@ -324,9 +329,29 @@ class Pi0(_model.BaseModel):
             # clean-action estimate is x_0 ~= x_t - t * v_t.
             action_estimate = x_t - time * v_t
             weights = guidance_weights()
-            error = (prev_actions - action_estimate) * weights
             guidance = rtc_guidance_weight if rtc_guidance_weight is not None else 5.0
-            v_t = v_t - guidance * error
+
+            def simple_guidance(args):
+                velocity, estimate = args
+                error = (prev_actions - estimate) * weights
+                return velocity - guidance * error
+
+            def vjp_guidance(args):
+                velocity, _ = args
+
+                def loss_fn(x):
+                    local_v = denoise(x, time)
+                    local_estimate = x - time * local_v
+                    residual = (local_estimate - prev_actions) * weights
+                    return 0.5 * jnp.mean(jnp.square(residual))
+
+                grad = jax.grad(loss_fn)(x_t)
+                return velocity - guidance * grad
+
+            if rtc_use_vjp is None:
+                v_t = simple_guidance((v_t, action_estimate))
+            else:
+                v_t = vjp_guidance((v_t, action_estimate))
             return x_t + dt * v_t, time + dt
 
         method_id = rtc_method_id if rtc_method_id is not None else jnp.asarray(1, dtype=jnp.int32)

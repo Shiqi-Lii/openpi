@@ -27,6 +27,8 @@ class RTCContext:
     method: str
     guidance_weight: float
     decay_tau: float
+    decay_end: int | None
+    use_vjp: bool
 
 
 class NZ100RTCClient:
@@ -51,6 +53,7 @@ class NZ100RTCClient:
         wrist_left_image: np.ndarray,
         robot_state: NZ100RobotState,
         previous_chunk: np.ndarray | None = None,
+        prefix_len: int | None = None,
         prompt: str | None = None,
     ) -> np.ndarray:
         """Return an RTC action chunk with shape ``(action_horizon, 16)``."""
@@ -71,7 +74,7 @@ class NZ100RTCClient:
             "prompt": self._config.prompt if prompt is None else prompt,
         }
 
-        rtc_context = self._make_rtc_context(previous_chunk)
+        rtc_context = self._make_rtc_context(previous_chunk, prefix_len=prefix_len)
         if rtc_context is not None:
             observation["_rtc"] = dataclasses.asdict(rtc_context)
 
@@ -85,7 +88,7 @@ class NZ100RTCClient:
     def reset(self) -> None:
         self._policy.reset()
 
-    def _make_rtc_context(self, previous_chunk: np.ndarray | None) -> RTCContext | None:
+    def _make_rtc_context(self, previous_chunk: np.ndarray | None, *, prefix_len: int | None = None) -> RTCContext | None:
         if previous_chunk is None:
             return None
 
@@ -93,7 +96,8 @@ class NZ100RTCClient:
         if previous_chunk.ndim != 2 or previous_chunk.shape[-1] != 16:
             raise ValueError(f"Expected previous action chunk shape (horizon, 16), got {previous_chunk.shape}")
 
-        prefix_len = min(int(self._config.rtc_prefix_len), previous_chunk.shape[0])
+        prefix_len = int(self._config.rtc_prefix_len if prefix_len is None else prefix_len)
+        prefix_len = min(prefix_len, previous_chunk.shape[0])
         if prefix_len <= 0:
             return None
 
@@ -104,4 +108,6 @@ class NZ100RTCClient:
             method=method,
             guidance_weight=float(self._config.rtc_guidance_weight),
             decay_tau=float(self._config.rtc_decay_tau),
+            decay_end=self._config.rtc_decay_end,
+            use_vjp=bool(self._config.rtc_use_vjp),
         )

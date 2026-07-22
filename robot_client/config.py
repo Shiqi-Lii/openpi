@@ -30,6 +30,8 @@ class ClientConfig:
     rtc_prefix_len: int = 5
     rtc_guidance_weight: float = 5.0
     rtc_decay_tau: float = 3.0
+    rtc_decay_end: int | None = None
+    rtc_use_vjp: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -138,6 +140,8 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "rtc_prefix_len": "rtc_prefix_len",
         "rtc_guidance_weight": "rtc_guidance_weight",
         "rtc_decay_tau": "rtc_decay_tau",
+        "rtc_decay_end": "rtc_decay_end",
+        "rtc_use_vjp": "rtc_use_vjp",
     }
     result = {target: data[source] for source, target in mapping.items() if source in data}
     if result.get("execution_mode") == "async_queue":

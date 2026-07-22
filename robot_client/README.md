@@ -136,6 +136,8 @@ rtc_execute_horizon: 8
 rtc_prefix_len: 5
 rtc_guidance_weight: 5.0
 rtc_decay_tau: 3.0
+rtc_decay_end: null
+rtc_use_vjp: false
 ```
 
 含义：
@@ -156,6 +158,8 @@ rtc_decay_tau: 3.0
 | `rtc_prefix_len` | RTC 使用上一段 chunk 前缀约束的步数 |
 | `rtc_guidance_weight` | `rtc_guidance` 的引导强度 |
 | `rtc_decay_tau` | `rtc_guidance` soft mask 衰减参数 |
+| `rtc_decay_end` | `rtc_guidance` soft mask 结束位置；`null` 表示默认到 `min(action_horizon, 2 * prefix_len)` |
+| `rtc_use_vjp` | `rtc_guidance` 是否使用 VJP/梯度 guidance；更接近论文，但更慢、更吃显存 |
 
 可选 `execution_mode`：
 
@@ -165,7 +169,7 @@ execution_mode: rtc_prefix
 execution_mode: rtc_guidance
 ```
 
-`sync_chunk` 是普通 OpenPI chunk 推理；`rtc_prefix` 会硬锁上一段 action 前缀；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。默认配置仍是 `sync_chunk`，不启用 RTC 时不会影响普通推理。
+`sync_chunk` 是普通 OpenPI chunk 推理；`rtc_prefix` 会硬锁上一段 action 前缀；`rtc_guidance` 会用 soft guidance 约束 chunk 连续性。RTC 会按推理耗时动态估计已经执行/即将执行的重叠动作，并对上一段 chunk 做时间对齐。不启用 RTC 时不会影响普通推理。
 
 启动和运行过程中，如果相机、关节状态或双夹爪状态还没到达，client 会一直等待对应 ROS2 topic 的第一帧数据。
 

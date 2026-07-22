@@ -139,13 +139,17 @@ class Policy(BasePolicy):
         else:
             raise ValueError(f"Unsupported RTC method: {method!r}")
 
-        return {
+        sample_kwargs = {
             "rtc_prev_actions": prev_actions,
             "rtc_prefix_len": jnp.asarray(int(rtc.get("prefix_len", prev_actions.shape[-2])), dtype=jnp.int32),
             "rtc_method_id": jnp.asarray(method_id, dtype=jnp.int32),
             "rtc_guidance_weight": jnp.asarray(float(rtc.get("guidance_weight", 5.0)), dtype=jnp.float32),
             "rtc_decay_tau": jnp.asarray(float(rtc.get("decay_tau", 3.0)), dtype=jnp.float32),
+            "rtc_decay_end": jnp.asarray(int(rtc.get("decay_end") or 0), dtype=jnp.int32),
         }
+        if bool(rtc.get("use_vjp", False)):
+            sample_kwargs["rtc_use_vjp"] = True
+        return sample_kwargs
 
     @property
     def metadata(self) -> dict[str, Any]:

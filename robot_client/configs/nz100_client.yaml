@@ -32,6 +32,8 @@ rtc_execute_horizon: 30
 rtc_prefix_len: 6
 rtc_guidance_weight: 5.0
 rtc_decay_tau: 3.0
+rtc_decay_end:
+rtc_use_vjp: false
 # ================================================================
 
 top_camera_topic: /top/image_raw
