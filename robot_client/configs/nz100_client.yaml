@@ -28,13 +28,14 @@ language_instruction: Open the blue cylindrical package, and close the package.
 execution_mode: rtc_prefix
 
 # RTC 参数只在 execution_mode 为 rtc_prefix / rtc_guidance 时生效。
-rtc_execute_horizon: 25
-rtc_prefix_len: 6
-rtc_guidance_weight: 5.0
-rtc_decay_tau: 3.0
-rtc_decay_end:
+rtc_execute_horizon: 16
+rtc_prefix_len: 7
+rtc_guidance_weight: 3.0
+rtc_decay_tau: 5.0
+rtc_decay_end: 34
 rtc_use_vjp: false
 rtc_delay_buffer_size: 4
+rtc_max_delay_steps: 12
 # ================================================================
 
 top_camera_topic: /top/image_raw

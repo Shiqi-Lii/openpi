@@ -136,9 +136,10 @@ rtc_execute_horizon: 8
 rtc_prefix_len: 5
 rtc_guidance_weight: 5.0
 rtc_decay_tau: 3.0
-rtc_decay_end: null
+rtc_decay_end: 27
 rtc_use_vjp: false
 rtc_delay_buffer_size: 4
+rtc_max_delay_steps: null
 ```
 
 含义：
@@ -159,9 +160,10 @@ rtc_delay_buffer_size: 4
 | `rtc_prefix_len` | RTC 使用上一段 chunk 前缀约束的步数 |
 | `rtc_guidance_weight` | `rtc_guidance` 的引导强度 |
 | `rtc_decay_tau` | `rtc_guidance` soft mask 衰减参数 |
-| `rtc_decay_end` | `rtc_guidance` soft mask 结束位置；`null` 表示默认到 `min(action_horizon, 2 * prefix_len)` |
+| `rtc_decay_end` | `rtc_guidance` soft mask 结束位置；使用 `rtc_guidance` 时必须显式指定，推荐 `open_loop_horizon - rtc_execute_horizon` |
 | `rtc_use_vjp` | `rtc_guidance` 是否使用 VJP/梯度 guidance；更接近论文，但更慢、更吃显存 |
 | `rtc_delay_buffer_size` | RTC 保存最近多少次推理延迟；后台推理使用其中最大值作为保守延迟估计 `d` |
+| `rtc_max_delay_steps` | 手动限制 RTC 最大延迟估计 `d`；`null` 表示自动使用 `open_loop_horizon - rtc_execute_horizon` |
 
 可选 `execution_mode`：
 

@@ -101,6 +101,19 @@ class NZ100RTCClient:
         if prefix_len <= 0:
             return None
 
+        target_horizon = int(self._config.open_loop_horizon)
+        if target_horizon <= 0:
+            target_horizon = previous_chunk.shape[0]
+        if previous_chunk.shape[0] < target_horizon:
+            pad_len = target_horizon - previous_chunk.shape[0]
+            pad_action = previous_chunk[-1:]
+            previous_chunk = np.concatenate(
+                [previous_chunk, np.repeat(pad_action, pad_len, axis=0)],
+                axis=0,
+            )
+        elif previous_chunk.shape[0] > target_horizon:
+            previous_chunk = previous_chunk[:target_horizon]
+
         method = "prefix" if self._config.execution_mode == "rtc_prefix" else "guidance"
         return RTCContext(
             prev_actions=build_raw_action_chunk(previous_chunk),

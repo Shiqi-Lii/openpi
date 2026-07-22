@@ -175,6 +175,20 @@ def _steps_from_elapsed(elapsed_s: float, control_hz: float) -> int:
     return max(0, int(elapsed_s * control_hz))
 
 
+def _max_rtc_delay_steps(config: ClientConfig) -> int:
+    if config.rtc_max_delay_steps is not None:
+        return max(1, int(config.rtc_max_delay_steps))
+    horizon = int(config.open_loop_horizon)
+    if horizon <= 0:
+        horizon = 50
+    s_min = max(1, int(config.rtc_execute_horizon))
+    return max(1, horizon - s_min)
+
+
+def _clamp_rtc_delay_steps(delay_steps: int, config: ClientConfig) -> int:
+    return min(max(1, int(delay_steps)), _max_rtc_delay_steps(config))
+
+
 def _run_sync_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
     client = NZ100SyncClient(config)
     executed_steps = 0
@@ -240,7 +254,7 @@ def _run_rtc_loop(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: boo
     condition = threading.Condition()
     shared = RTCSharedState(ctx=RTCActionContext(raw_chunk=current_chunk, step_index=0))
     delay_buffer = collections.deque(
-        [_steps_from_elapsed(inference_elapsed_s, config.control_hz)],
+        [_clamp_rtc_delay_steps(int(config.rtc_prefix_len), config)],
         maxlen=max(1, int(config.rtc_delay_buffer_size)),
     )
     inference_thread = threading.Thread(
@@ -327,7 +341,7 @@ def _rtc_inference_loop(
 
             start_step = int(shared.ctx.step_index)
             previous_chunk = np.asarray(shared.ctx.raw_chunk[start_step:], dtype=np.float32).copy()
-            predicted_delay_steps = max(max(delay_buffer), int(config.rtc_prefix_len))
+            predicted_delay_steps = _clamp_rtc_delay_steps(max(max(delay_buffer), int(config.rtc_prefix_len)), config)
 
         try:
             top_image, wrist_left_image, robot_state = _read_observation(ros_io, mock=mock)
@@ -354,7 +368,8 @@ def _rtc_inference_loop(
                 condition.notify_all()
             return
         inference_elapsed_s = time.monotonic() - tic
-        observed_delay_steps = max(1, _steps_from_elapsed(inference_elapsed_s, config.control_hz))
+        raw_observed_delay_steps = max(1, _steps_from_elapsed(inference_elapsed_s, config.control_hz))
+        observed_delay_steps = _clamp_rtc_delay_steps(raw_observed_delay_steps, config)
         if config.open_loop_horizon > 0:
             new_chunk = new_chunk[: config.open_loop_horizon]
         if new_chunk.shape[0] == 0:
@@ -374,7 +389,8 @@ def _rtc_inference_loop(
 
         print(
             "RTC background inference done: "
-            f"latency={inference_elapsed_s:.3f}s, observed_delay={observed_delay_steps}, "
+            f"latency={inference_elapsed_s:.3f}s, "
+            f"observed_delay={observed_delay_steps}, raw_observed_delay={raw_observed_delay_steps}, "
             f"new_step_index={new_step_index}, delay_buffer={list(delay_buffer)}"
         )
 

@@ -314,8 +314,9 @@ class Pi0(_model.BaseModel):
         def guidance_weights():
             positions = jnp.arange(self.action_horizon)
             locked = positions < prefix_len
-            decay_end = rtc_decay_end if rtc_decay_end is not None else 0
-            decay_end = jnp.where(decay_end > prefix_len, decay_end, jnp.minimum(self.action_horizon, prefix_len * 2))
+            if rtc_decay_end is None:
+                raise ValueError("rtc_decay_end must be specified for rtc_guidance inference")
+            decay_end = jnp.clip(rtc_decay_end, prefix_len, self.action_horizon)
             tau = jnp.maximum(rtc_decay_tau if rtc_decay_tau is not None else 3.0, 1e-6)
             decay = jnp.exp(-jnp.maximum(positions - prefix_len, 0) / tau)
             in_decay = (positions >= prefix_len) & (positions < decay_end)

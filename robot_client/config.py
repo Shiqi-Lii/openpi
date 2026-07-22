@@ -33,6 +33,7 @@ class ClientConfig:
     rtc_decay_end: int | None = None
     rtc_use_vjp: bool = False
     rtc_delay_buffer_size: int = 4
+    rtc_max_delay_steps: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -144,6 +145,7 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "rtc_decay_end": "rtc_decay_end",
         "rtc_use_vjp": "rtc_use_vjp",
         "rtc_delay_buffer_size": "rtc_delay_buffer_size",
+        "rtc_max_delay_steps": "rtc_max_delay_steps",
     }
     result = {target: data[source] for source, target in mapping.items() if source in data}
     if result.get("execution_mode") == "async_queue":
