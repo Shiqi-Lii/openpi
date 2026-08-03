@@ -239,9 +239,10 @@ class Pi0(_model.BaseModel):
 
         dt = 1.0 / self.config.legato_train_num_steps
         kappa = omega / dt
-        # OpenPI integrates from noise time=1 to action time=0, so this is the
-        # time-reversed form of the paper's Legato velocity target.
-        u_t = (1 - kappa * time_expanded) * (noise - clean_actions)
+        # OpenPI integrates from noise time=1 to action time=0. Legato-Kinetix
+        # uses the opposite time direction, so the velocity sign flips while
+        # the kappa amplification stays positive.
+        u_t = (1 + kappa * time_expanded) * (noise - clean_actions)
 
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, guided_x_t, time)

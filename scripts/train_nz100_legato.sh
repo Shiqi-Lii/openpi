@@ -19,8 +19,10 @@ CONFIG_NAME="pi05_nz100_legato"
 LEGATO_OMEGA_DIM="31"
 LEGATO_LOSS_ACTION_DIM="16"
 LEGATO_TRAIN_NUM_STEPS="10"
-LEGATO_FULL_GUIDANCE_STEPS="5"
-LEGATO_RAMP_STEPS="15"
+LEGATO_FULL_GUIDANCE_MIN="0"
+LEGATO_FULL_GUIDANCE_MAX="4"
+LEGATO_RAMP_MIN="0"
+LEGATO_RAMP_MAX="0"
 
 CONDA_ROOT="/mnt/16T/App_dir/conda_dir/miniconda3"
 CONDA_ENV="${CONDA_ROOT}/envs/openpi_lsq"
@@ -71,5 +73,8 @@ python scripts/train.py "${CONFIG_NAME}" \
     --model.legato-omega-dim "${LEGATO_OMEGA_DIM}" \
     --model.legato-loss-action-dim "${LEGATO_LOSS_ACTION_DIM}" \
     --model.legato-train-num-steps "${LEGATO_TRAIN_NUM_STEPS}" \
-    --model.legato-full-guidance-steps "${LEGATO_FULL_GUIDANCE_STEPS}" \
-    --model.legato-ramp-steps "${LEGATO_RAMP_STEPS}"
+    --model.legato-randomize-schedule \
+    --model.legato-full-guidance-min "${LEGATO_FULL_GUIDANCE_MIN}" \
+    --model.legato-full-guidance-max "${LEGATO_FULL_GUIDANCE_MAX}" \
+    --model.legato-ramp-min "${LEGATO_RAMP_MIN}" \
+    --model.legato-ramp-max "${LEGATO_RAMP_MAX}"

@@ -43,12 +43,12 @@ rtc_max_delay_steps: 12
 
 # Legato 参数只在 execution_mode 为 legato 时生效。
 # legato_prefix_len 对应论文里的 full-guidance delay d。
-# legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=5, ramp=15 时设为 20。
+# legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=4, ramp=0 时设为 4。
 legato_execute_horizon: 35
-legato_prefix_len: 5
-legato_ramp_end: 20
+legato_prefix_len: 4
+legato_ramp_end: 4
 legato_delay_buffer_size: 4
-legato_max_delay_steps: 12
+legato_max_delay_steps: 4
 # ================================================================
 
 top_camera_topic: /top/image_raw

@@ -66,15 +66,15 @@ bash scripts/train_nz100_legato.sh
 ```text
 legato_loss_action_dim = 16
 legato_train_num_steps = 10
-d = legato_full_guidance_steps = 5
-r = legato_ramp_steps = 15
+d = randint(0, 4)
+r = 0
 ```
 
 对应机器人端：
 
 ```yaml
-legato_prefix_len: 5
-legato_ramp_end: 20
+legato_prefix_len: 4
+legato_ramp_end: 4
 ```
 
 ## 随机 Schedule 训练
@@ -133,7 +133,7 @@ t=0: action
 x_t = t * eps + (1 - t) * A
 guided_x_t = (1 - omega) * x_t + omega * A
 kappa = omega / dt
-u_legato = (1 - kappa * t) * (eps - A)
+u_legato = (1 + kappa * t) * (eps - A)
 loss = MSE(v_theta(guided_x_t, observation, t, omega), u_legato)
 ```
 
