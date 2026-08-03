@@ -1,7 +1,7 @@
-"""Real-Time Chunking NZ100 OpenPI policy client.
+"""Legato NZ100 OpenPI policy client.
 
-This file is intentionally separate from ``sync_client.py`` so the normal
-request-response execution path stays small and unchanged.
+This client is separate from RTC so native-continuation inference can evolve
+without changing the existing RTC guidance request path.
 """
 
 from __future__ import annotations
@@ -19,24 +19,21 @@ from robot_client.state_builder import build_raw_state
 
 
 @dataclasses.dataclass(frozen=True)
-class RTCContext:
-    """Previous action chunk information used to guide the next chunk."""
+class LegatoContext:
+    """Previous action chunk information used for Legato continuation."""
 
     prev_actions: np.ndarray
     prefix_len: int
-    guidance_weight: float
-    decay_tau: float
-    decay_end: int | None
-    use_vjp: bool
+    ramp_end: int
 
 
-class NZ100RTCClient:
-    """OpenPI websocket client with optional RTC context per inference call."""
+class NZ100LegatoClient:
+    """OpenPI websocket client with optional Legato context per inference call."""
 
     def __init__(self, config: ClientConfig) -> None:
-        if config.execution_mode != "rtc_guidance":
+        if config.execution_mode != "legato":
             raise ValueError(
-                "NZ100RTCClient requires execution_mode to be 'rtc_guidance', "
+                "NZ100LegatoClient requires execution_mode to be 'legato', "
                 f"got {config.execution_mode!r}"
             )
         self._config = config
@@ -53,9 +50,10 @@ class NZ100RTCClient:
         robot_state: NZ100RobotState,
         previous_chunk: np.ndarray | None = None,
         prefix_len: int | None = None,
+        ramp_end: int | None = None,
         prompt: str | None = None,
     ) -> np.ndarray:
-        """Return an RTC action chunk with shape ``(action_horizon, 16)``."""
+        """Return a Legato action chunk with shape ``(action_horizon, 16)``."""
 
         image = image_tools.resize_with_pad(top_image, self._config.image_size, self._config.image_size)
         image = image_tools.convert_to_uint8(image)
@@ -73,9 +71,9 @@ class NZ100RTCClient:
             "prompt": self._config.prompt if prompt is None else prompt,
         }
 
-        rtc_context = self._make_rtc_context(previous_chunk, prefix_len=prefix_len)
-        if rtc_context is not None:
-            observation["_rtc"] = dataclasses.asdict(rtc_context)
+        legato_context = self._make_legato_context(previous_chunk, prefix_len=prefix_len, ramp_end=ramp_end)
+        if legato_context is not None:
+            observation["_legato"] = dataclasses.asdict(legato_context)
 
         result = self._policy.infer(observation)
         actions = np.asarray(result["actions"], dtype=np.float32)
@@ -87,7 +85,13 @@ class NZ100RTCClient:
     def reset(self) -> None:
         self._policy.reset()
 
-    def _make_rtc_context(self, previous_chunk: np.ndarray | None, *, prefix_len: int | None = None) -> RTCContext | None:
+    def _make_legato_context(
+        self,
+        previous_chunk: np.ndarray | None,
+        *,
+        prefix_len: int | None = None,
+        ramp_end: int | None = None,
+    ) -> LegatoContext | None:
         if previous_chunk is None:
             return None
 
@@ -95,7 +99,7 @@ class NZ100RTCClient:
         if previous_chunk.ndim != 2 or previous_chunk.shape[-1] != 16:
             raise ValueError(f"Expected previous action chunk shape (horizon, 16), got {previous_chunk.shape}")
 
-        prefix_len = int(self._config.rtc_prefix_len if prefix_len is None else prefix_len)
+        prefix_len = int(self._config.legato_prefix_len if prefix_len is None else prefix_len)
         prefix_len = min(prefix_len, previous_chunk.shape[0])
         if prefix_len <= 0:
             return None
@@ -113,11 +117,12 @@ class NZ100RTCClient:
         elif previous_chunk.shape[0] > target_horizon:
             previous_chunk = previous_chunk[:target_horizon]
 
-        return RTCContext(
+        ramp_end = self._config.legato_ramp_end if ramp_end is None else ramp_end
+        if ramp_end is None:
+            ramp_end = target_horizon
+
+        return LegatoContext(
             prev_actions=build_raw_action_chunk(previous_chunk),
             prefix_len=prefix_len,
-            guidance_weight=float(self._config.rtc_guidance_weight),
-            decay_tau=float(self._config.rtc_decay_tau),
-            decay_end=self._config.rtc_decay_end,
-            use_vjp=bool(self._config.rtc_use_vjp),
+            ramp_end=int(ramp_end),
         )

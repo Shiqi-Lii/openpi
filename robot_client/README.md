@@ -36,6 +36,11 @@ uv run scripts/serve_policy.py policy:checkpoint \
   --policy.config=pi05_nz100 \
   --policy.dir=/path/to/checkpoint_step \
 ```
+服务器使用conda环境示例：
+```bash
+CUDA_VISIBLE_DEVICES=2 python scripts/serve_policy.py policy:checkpoint   --policy.config=pi05_nz100   --policy.dir=/mnt/16T/lisq5005_dir/openpi_checkpoints/pi05_nz100/nz100_v2_open_close_package/29999   --policy.asset-id=data_open_close_package
+INFO:root:Loading model...
+```
 
 ## 测试连接
 
@@ -43,6 +48,8 @@ uv run scripts/serve_policy.py policy:checkpoint \
 
 ```bash
 python -m robot_client.main --mock --once --prompt "pick up the bottle"
+# 持续流
+python -m robot_client.main --mock --execution-mode sync_chunk --prompt "pick up the bottle"
 ```
 
 这只会发送随机图像和零关节，不会控制真实机器人。

@@ -67,10 +67,11 @@ class Policy(BasePolicy):
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
         rtc = obs.get("_rtc")
-        obs_without_rtc = {key: value for key, value in obs.items() if key != "_rtc"}
+        legato = obs.get("_legato")
+        obs_without_context = {key: value for key, value in obs.items() if key not in ("_rtc", "_legato")}
 
         # Make a copy since transformations may modify the inputs in place.
-        inputs = jax.tree.map(lambda x: x, obs_without_rtc)
+        inputs = jax.tree.map(lambda x: x, obs_without_context)
         inputs = self._input_transform(inputs)
         if not self._is_pytorch_model:
             # Make a batch and convert to jax.Array.
@@ -93,7 +94,11 @@ class Policy(BasePolicy):
         if rtc is not None:
             if self._is_pytorch_model:
                 raise NotImplementedError("RTC inference is currently implemented for JAX OpenPI models only.")
-            sample_kwargs.update(self._prepare_rtc_sample_kwargs(obs_without_rtc, rtc))
+            sample_kwargs.update(self._prepare_rtc_sample_kwargs(obs_without_context, rtc))
+        if legato is not None:
+            if self._is_pytorch_model:
+                raise NotImplementedError("Legato inference is currently implemented for JAX OpenPI models only.")
+            sample_kwargs.update(self._prepare_legato_sample_kwargs(obs_without_context, legato))
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
@@ -148,6 +153,26 @@ class Policy(BasePolicy):
         if bool(rtc.get("use_vjp", False)):
             sample_kwargs["rtc_use_vjp"] = True
         return sample_kwargs
+
+    def _prepare_legato_sample_kwargs(self, obs: dict, legato: dict) -> dict[str, Any]:
+        """Transform previous actions into model space for Legato sampling."""
+
+        if not isinstance(legato, dict):
+            raise ValueError(f"_legato must be a dict, got {type(legato).__name__}")
+        if "prev_actions" not in legato:
+            raise ValueError("_legato.prev_actions is required for Legato inference")
+        if "ramp_end" not in legato:
+            raise ValueError("_legato.ramp_end is required for Legato inference")
+
+        legato_inputs = jax.tree.map(lambda x: x, {**obs, "actions": legato["prev_actions"]})
+        legato_inputs = self._input_transform(legato_inputs)
+        prev_actions = jnp.asarray(legato_inputs["actions"])[np.newaxis, ...]
+
+        return {
+            "legato_prev_actions": prev_actions,
+            "legato_prefix_len": jnp.asarray(int(legato.get("prefix_len", prev_actions.shape[-2])), dtype=jnp.int32),
+            "legato_ramp_end": jnp.asarray(int(legato["ramp_end"]), dtype=jnp.int32),
+        }
 
     @property
     def metadata(self) -> dict[str, Any]:

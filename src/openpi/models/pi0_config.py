@@ -34,6 +34,27 @@ class Pi0Config(_model.BaseModelConfig):
 
     pytorch_compile_mode: str | None = "max-autotune"
 
+    # Optional Legato-style native continuation for flow action chunking.
+    # Disabled by default so existing training and inference behavior is unchanged.
+    legato_enabled: bool = False
+    # Index of an unused action dimension used to carry the per-horizon schedule.
+    # Keeping this inside the existing action vector avoids changing checkpoint shapes.
+    legato_omega_dim: int | None = None
+    # Number of leading action dimensions that correspond to real robot actions.
+    # Loss is computed on these dimensions, excluding legato_omega_dim if it is inside this range.
+    legato_loss_action_dim: int | None = None
+    # Denoising step count used to construct the Legato training target.
+    legato_train_num_steps: int = 10
+    # Fixed deployment schedule: full-guidance prefix length d and linear ramp length r.
+    legato_full_guidance_steps: int = 0
+    legato_ramp_steps: int = 0
+    # Optional schedule randomization, following the paper's d/r randomization idea.
+    legato_randomize_schedule: bool = False
+    legato_full_guidance_min: int = 0
+    legato_full_guidance_max: int = 0
+    legato_ramp_min: int = 0
+    legato_ramp_max: int = 0
+
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
@@ -46,6 +67,34 @@ class Pi0Config(_model.BaseModelConfig):
                 "max-autotune",
                 "max-autotune-no-cudagraphs",
             ]
+        if self.legato_enabled:
+            if self.legato_omega_dim is None:
+                raise ValueError("legato_omega_dim must be set when legato_enabled=True")
+            if not 0 <= self.legato_omega_dim < self.action_dim:
+                raise ValueError(
+                    f"legato_omega_dim must be in [0, {self.action_dim}), got {self.legato_omega_dim}"
+                )
+            if self.legato_train_num_steps <= 0:
+                raise ValueError(f"legato_train_num_steps must be positive, got {self.legato_train_num_steps}")
+            if self.legato_loss_action_dim is not None and not 0 < self.legato_loss_action_dim <= self.action_dim:
+                raise ValueError(
+                    f"legato_loss_action_dim must be in (0, {self.action_dim}], got {self.legato_loss_action_dim}"
+                )
+            for name in (
+                "legato_full_guidance_steps",
+                "legato_ramp_steps",
+                "legato_full_guidance_min",
+                "legato_full_guidance_max",
+                "legato_ramp_min",
+                "legato_ramp_max",
+            ):
+                if getattr(self, name) < 0:
+                    raise ValueError(f"{name} must be non-negative, got {getattr(self, name)}")
+            if self.legato_randomize_schedule:
+                if self.legato_full_guidance_max < self.legato_full_guidance_min:
+                    raise ValueError("legato_full_guidance_max must be >= legato_full_guidance_min")
+                if self.legato_ramp_max < self.legato_ramp_min:
+                    raise ValueError("legato_ramp_max must be >= legato_ramp_min")
 
     @property
     @override

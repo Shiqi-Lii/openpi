@@ -36,6 +36,14 @@ class ClientConfig:
     rtc_delay_buffer_size: int = 4
     rtc_max_delay_steps: int | None = None
 
+    # Legato native-continuation settings. These are only used when
+    # ``execution_mode`` is ``legato``.
+    legato_execute_horizon: int = 8
+    legato_prefix_len: int = 5
+    legato_ramp_end: int | None = None
+    legato_delay_buffer_size: int = 4
+    legato_max_delay_steps: int | None = None
+
 
 @dataclasses.dataclass(frozen=True)
 class Ros2Config:
@@ -148,6 +156,11 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "rtc_use_vjp": "rtc_use_vjp",
         "rtc_delay_buffer_size": "rtc_delay_buffer_size",
         "rtc_max_delay_steps": "rtc_max_delay_steps",
+        "legato_execute_horizon": "legato_execute_horizon",
+        "legato_prefix_len": "legato_prefix_len",
+        "legato_ramp_end": "legato_ramp_end",
+        "legato_delay_buffer_size": "legato_delay_buffer_size",
+        "legato_max_delay_steps": "legato_max_delay_steps",
     }
     result = {target: data[source] for source, target in mapping.items() if source in data}
     return result

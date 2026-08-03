@@ -12,6 +12,7 @@ from robot_client.config import ClientConfig
 from robot_client.config import load_app_config
 from robot_client.ros2_io import NZ100Ros2IO
 from robot_client.runners import async_queue
+from robot_client.runners import legato
 from robot_client.runners import rtc_guidance
 from robot_client.runners import sync_chunk
 
@@ -30,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--control-hz", type=float, default=None, help="Override local action execution rate")
     parser.add_argument(
         "--execution-mode",
-        choices=("sync_chunk", "async_queue", "rtc_guidance"),
+        choices=("sync_chunk", "async_queue", "rtc_guidance", "legato"),
         default=None,
         help="Override inference/execution mode",
     )
@@ -63,6 +64,11 @@ def main() -> None:
         rtc_use_vjp=client_base.rtc_use_vjp,
         rtc_delay_buffer_size=client_base.rtc_delay_buffer_size,
         rtc_max_delay_steps=client_base.rtc_max_delay_steps,
+        legato_execute_horizon=client_base.legato_execute_horizon,
+        legato_prefix_len=client_base.legato_prefix_len,
+        legato_ramp_end=client_base.legato_ramp_end,
+        legato_delay_buffer_size=client_base.legato_delay_buffer_size,
+        legato_max_delay_steps=client_base.legato_max_delay_steps,
     )
 
     print(
@@ -93,6 +99,8 @@ def main() -> None:
             async_queue.run(config, ros_io=ros_io, mock=args.mock, once=args.once)
         elif config.execution_mode == "rtc_guidance":
             rtc_guidance.run(config, ros_io=ros_io, mock=args.mock, once=args.once)
+        elif config.execution_mode == "legato":
+            legato.run(config, ros_io=ros_io, mock=args.mock, once=args.once)
         else:
             raise ValueError(f"Unsupported execution_mode: {config.execution_mode!r}")
     finally:

@@ -25,7 +25,8 @@ language_instruction: Open the blue cylindrical package, and close the package.
 #   sync_chunk   普通 OpenPI chunk 推理
 #   async_queue  异步动作队列预取
 #   rtc_guidance RTC soft guidance
-execution_mode: async_queue
+#   legato       Legato native continuation
+execution_mode: sync_chunk
 
 # async_queue 参数只在 execution_mode 为 async_queue 时生效。
 action_refill_threshold: 6
@@ -39,6 +40,15 @@ rtc_decay_end: 15
 rtc_use_vjp: false
 rtc_delay_buffer_size: 4
 rtc_max_delay_steps: 12
+
+# Legato 参数只在 execution_mode 为 legato 时生效。
+# legato_prefix_len 对应论文里的 full-guidance delay d。
+# legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=5, ramp=15 时设为 20。
+legato_execute_horizon: 35
+legato_prefix_len: 5
+legato_ramp_end: 20
+legato_delay_buffer_size: 4
+legato_max_delay_steps: 12
 # ================================================================
 
 top_camera_topic: /top/image_raw
