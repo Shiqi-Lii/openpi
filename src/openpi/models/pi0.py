@@ -225,7 +225,10 @@ class Pi0(_model.BaseModel):
 
         batch_shape = actions.shape[:-2]
         noise = jax.random.normal(noise_rng, actions.shape)
-        time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
+        # Legato's target depends on the denoising step size. Use the paper's
+        # uniform time sampling here instead of the base pi0 beta schedule,
+        # otherwise high-noise timesteps dominate the reshaped target.
+        time = jax.random.uniform(time_rng, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
         omega = self._legato_training_schedule(schedule_rng, batch_shape)
 

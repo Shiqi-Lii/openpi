@@ -13,6 +13,7 @@ LOG_INTERVAL="100"
 SAVE_INTERVAL="1000"
 KEEP_PERIOD="5000"
 FSDP_DEVICES="1"
+CONFIG_NAME="pi05_nz100_legato"
 
 # Legato parameters. Keep LEGATO_TRAIN_NUM_STEPS aligned with inference num_steps.
 LEGATO_OMEGA_DIM="31"
@@ -47,13 +48,13 @@ cd "${REPO_ROOT}"
 python scripts/generate_lerobot_episodes_stats.py "${DATA_REPO_ID}"
 
 python scripts/compute_norm_stats.py \
-    --config-name pi05_nz100 \
+    --config-name "${CONFIG_NAME}" \
     --repo-id "${DATA_REPO_ID}" \
     --assets-base-dir "${ASSETS_DIR}" \
     --num-workers "${NUM_WORKERS}" \
     --skip-videos
 
-python scripts/train.py pi05_nz100 \
+python scripts/train.py "${CONFIG_NAME}" \
     --data.repo-id "${DATA_REPO_ID}" \
     --assets-base-dir "${ASSETS_DIR}" \
     --checkpoint-base-dir "${CHECKPOINT_DIR}" \

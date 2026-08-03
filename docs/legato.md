@@ -26,6 +26,7 @@ NZ100 相关训练配置在 `src/openpi/training/config.py` 中：
 
 ```text
 pi05_nz100
+pi05_nz100_legato
 pi05_nz100_lora
 ```
 
@@ -39,7 +40,7 @@ Legato 参数属于 `Pi0Config`，有两种传入方式：
 全量微调示例：
 
 ```bash
-python scripts/train.py pi05_nz100 \
+python scripts/train.py pi05_nz100_legato \
   --data.repo-id /path/to/lerobot_dataset \
   --assets-base-dir /path/to/openpi_assets \
   --checkpoint-base-dir /path/to/openpi_checkpoints \
@@ -49,16 +50,32 @@ python scripts/train.py pi05_nz100 \
   --num-workers 8 \
   --save-interval 1000 \
   --keep-period 5000 \
-  --fsdp-devices 1 \
-  --model.legato-enabled \
-  --model.legato-omega-dim 31 \
-  --model.legato-loss-action-dim 16 \
-  --model.legato-train-num-steps 10 \
-  --model.legato-full-guidance-steps 5 \
-  --model.legato-ramp-steps 15
+  --fsdp-devices 1
 ```
 
-如果使用 `scripts/train_nz100.sh`，把这些 `--model.legato-*` 参数加到最后的 `python scripts/train.py pi05_nz100 ...` 命令后面即可。
+也可以直接运行简单脚本：
+
+```bash
+bash scripts/train_nz100_legato.sh
+```
+
+注意：Legato checkpoint 推理时也要使用 `pi05_nz100_legato`。如果服务端仍然用 `pi05_nz100`，会按普通 Pi0.5 配置建模，训练时学到的 `omega` 输入不会按 Legato 方式使用。
+
+当前 `pi05_nz100_legato` 只保留服务端推理一定需要的 Legato 开关和 `omega` 维度。训练用的 loss 维度、target 步数和固定 schedule 由 `scripts/train_nz100_legato.sh` 传入：
+
+```text
+legato_loss_action_dim = 16
+legato_train_num_steps = 10
+d = legato_full_guidance_steps = 5
+r = legato_ramp_steps = 15
+```
+
+对应机器人端：
+
+```yaml
+legato_prefix_len: 5
+legato_ramp_end: 20
+```
 
 ## 随机 Schedule 训练
 
@@ -183,6 +200,17 @@ legato_max_delay_steps: 12
 ## 启动 Legato 推理
 
 先像平时一样启动 policy server，并加载 Legato 训练出来的 checkpoint。然后运行：
+
+```bash
+python scripts/serve_policy.py policy:checkpoint \
+  --policy.config=pi05_nz100_legato \
+  --policy.dir=/path/to/openpi_checkpoints/pi05_nz100_legato/nz100_legato/29999 \
+  --policy.asset-id=<asset_id>
+```
+
+当前推理仍然使用 Pi0 默认的 10 个 denoise steps，因此 `pi05_nz100_legato` 里的 `legato_train_num_steps` 也设为 `10`。
+
+机器人端启动：
 
 ```bash
 python -m robot_client.main --config robot_client/configs/nz100_client.yaml
