@@ -1,23 +1,22 @@
-# policy_host: 172.22.1.127
-policy_host: 192.168.168.150
-policy_port: 8000
+policy_host: 172.22.1.127
+# policy_host: 192.168.168.150
+policy_port: 8001
 control_fps: 30
 open_loop_horizon: 50
 max_steps: 0
-point_time_from_start: 0.0333
+point_time_from_start: 0.1
 
 # ===启动回位=======================================================
 # true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
 # false: 不发送回位轨迹，直接启动策略推理。
 home_on_start: true
-left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
-# left_home_positions: [0.36, 0.36, -0.01, 1.92, -1.57, 0.00, 1.8]
-right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+left_home_positions: [0.36, 0.36, 0.00, 1.92, -0.30, 0.00, 0.60]
+right_home_positions: [-0.36, 0.36, 0.00, 1.92, 0.30, 0.00, 2.00]
 home_time_from_start: 4.0
 # ================================================================
 
 # ===指令===========================================================
-language_instruction: Open the blue cylindrical package, and close the package.
+language_instruction: Pick up the bottle and place it in the blue box.
 # ================================================================
 
 # ===执行模式=======================================================
@@ -26,7 +25,7 @@ language_instruction: Open the blue cylindrical package, and close the package.
 #   async_queue  异步动作队列预取
 #   rtc_guidance RTC soft guidance
 #   legato       Legato native continuation
-execution_mode: sync_chunk
+execution_mode: legato
 
 # async_queue 参数只在 execution_mode 为 async_queue 时生效。
 action_refill_threshold: 6

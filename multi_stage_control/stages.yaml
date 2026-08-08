@@ -1,0 +1,17 @@
+{
+  "stages": [
+    {
+      "mode": "plan",
+      "duration": 0.5,
+      "left_positions": [-0.06, 0.29, -0.21, 1.39, 1.76, -0.60, -1.66],
+      "right_positions": [-0.36, 0.33, -0.09, 1.93, 1.42, 0.15, 0.97],
+      "left_gripper": "open",
+      "right_gripper": "open"
+    },
+    {
+      "mode": "vla",
+      "config": "robot_client/configs/nz100_client.yaml",
+      "prefetch_before": 0.0
+    }
+  ]
+}

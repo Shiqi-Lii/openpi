@@ -44,6 +44,11 @@ class ClientConfig:
     legato_delay_buffer_size: int = 4
     legato_max_delay_steps: int | None = None
 
+    # Optional file gate used by multi-stage control after prefetching the first chunk.
+    start_signal_file: str | None = None
+    inference_signal_file: str | None = None
+    ready_signal_file: str | None = None
+
 
 @dataclasses.dataclass(frozen=True)
 class Ros2Config:

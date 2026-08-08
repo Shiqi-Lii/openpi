@@ -37,6 +37,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mock", action="store_true", help="Use fake camera/state and print actions only")
     parser.add_argument("--once", action="store_true", help="Run one inference request and exit")
+    parser.add_argument(
+        "--skip-home",
+        action="store_true",
+        help="Skip startup homing even when home_on_start is enabled in the config",
+    )
+    parser.add_argument(
+        "--start-signal-file",
+        default=None,
+        help="After initial Legato inference, wait until this file exists before moving",
+    )
+    parser.add_argument(
+        "--inference-signal-file",
+        default=None,
+        help="Wait for this file before reading the initial observation and running inference",
+    )
+    parser.add_argument(
+        "--ready-signal-file",
+        default=None,
+        help="Create this file after ROS2 and the Legato WebSocket client are ready",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +89,9 @@ def main() -> None:
         legato_ramp_end=client_base.legato_ramp_end,
         legato_delay_buffer_size=client_base.legato_delay_buffer_size,
         legato_max_delay_steps=client_base.legato_max_delay_steps,
+        start_signal_file=args.start_signal_file,
+        inference_signal_file=args.inference_signal_file,
+        ready_signal_file=args.ready_signal_file,
     )
 
     print(
@@ -88,7 +111,7 @@ def main() -> None:
         if not args.mock:
             ros_io = NZ100Ros2IO(app_config.ros2)
             ros_io.connect()
-            if app_config.ros2.home_on_start:
+            if app_config.ros2.home_on_start and not args.skip_home:
                 ros_io.move_to_home()
             else:
                 print("Skipping NZ100 startup pose command.")

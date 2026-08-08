@@ -43,6 +43,21 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
     if config.control_hz <= 0:
         raise ValueError(f"control_hz must be positive for Legato, got {config.control_hz}")
 
+    if config.ready_signal_file is not None:
+        from pathlib import Path
+
+        Path(config.ready_signal_file).touch()
+        print("Legato standby ready; ROS2 and policy server are connected.")
+
+    if config.inference_signal_file is not None:
+        from pathlib import Path
+
+        inference_signal = Path(config.inference_signal_file)
+        print(f"Waiting for initial inference signal: {inference_signal}")
+        while not inference_signal.exists():
+            time.sleep(0.01)
+        print("Initial inference signal received.")
+
     print("Reading initial observation for Legato.")
     top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
     print(f"Requesting initial Legato action chunk; state={format_state(robot_state)}")
@@ -59,6 +74,15 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
         current_chunk = current_chunk[: config.open_loop_horizon]
     if current_chunk.shape[0] == 0:
         raise ValueError("Initial Legato action chunk is empty")
+
+    if config.start_signal_file is not None:
+        from pathlib import Path
+
+        signal_file = Path(config.start_signal_file)
+        print(f"Initial Legato chunk ready; waiting for start signal: {signal_file}")
+        while not signal_file.exists():
+            time.sleep(0.01)
+        print("Legato start signal received.")
 
     condition = threading.Condition()
     shared = LegatoSharedState(ctx=LegatoActionContext(raw_chunk=current_chunk, step_index=0))
