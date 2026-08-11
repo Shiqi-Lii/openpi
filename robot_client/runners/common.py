@@ -18,10 +18,6 @@ def read_mock_top_image() -> np.ndarray:
     return np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8)
 
 
-def read_mock_wrist_left_image() -> np.ndarray:
-    return np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8)
-
-
 def read_mock_robot_state() -> NZ100RobotState:
     return NZ100RobotState(
         left_joints=np.zeros((7,), dtype=np.float32),
@@ -33,11 +29,10 @@ def read_mock_robot_state() -> NZ100RobotState:
 
 def read_observation(
     ros_io: NZ100Ros2IO | None, *, mock: bool
-) -> tuple[np.ndarray, np.ndarray, NZ100RobotState]:
+) -> tuple[np.ndarray, NZ100RobotState]:
     top_image = read_mock_top_image() if mock else ros_io.get_top_image()
-    wrist_left_image = read_mock_wrist_left_image() if mock else ros_io.get_wrist_left_image()
     robot_state = read_mock_robot_state() if mock else ros_io.get_robot_state()
-    return top_image, wrist_left_image, robot_state
+    return top_image, robot_state
 
 
 def execute_action_chunk(
@@ -71,12 +66,11 @@ def infer_sync_chunk(
     mock: bool,
     log_prefix: str = "",
 ) -> np.ndarray:
-    top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
+    top_image, robot_state = read_observation(ros_io, mock=mock)
     print(f"{log_prefix}Requesting action chunk from OpenPI server; state={format_state(robot_state)}")
     tic = time.monotonic()
     action_chunk = client.infer(
         top_image=top_image,
-        wrist_left_image=wrist_left_image,
         robot_state=robot_state,
     )
     print(
@@ -108,4 +102,3 @@ def format_action(action) -> str:
 
 def format_array(values: np.ndarray) -> str:
     return np.array2string(np.asarray(values, dtype=np.float32), precision=3, suppress_small=True)
-

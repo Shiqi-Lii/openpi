@@ -59,12 +59,10 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
         print("Initial inference signal received.")
 
     print("Reading initial observation for Legato.")
-    top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
+    top_image, robot_state = read_observation(ros_io, mock=mock)
     print(f"Requesting initial Legato action chunk; state={format_state(robot_state)}")
     inference_start_s = time.monotonic()
-    current_chunk = client.infer(
-        top_image=top_image, wrist_left_image=wrist_left_image, robot_state=robot_state
-    )
+    current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
     inference_elapsed_s = time.monotonic() - inference_start_s
     print(
         "Received initial Legato chunk: "
@@ -207,7 +205,7 @@ def _legato_inference_loop(
             )
 
         try:
-            top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
+            top_image, robot_state = read_observation(ros_io, mock=mock)
             prefix_len = min(predicted_delay_steps, previous_chunk.shape[0])
             previous_for_legato = previous_chunk if prefix_len > 0 else None
             ramp_end = _legato_ramp_end(config, prefix_len)
@@ -220,7 +218,6 @@ def _legato_inference_loop(
             tic = time.monotonic()
             new_chunk = client.infer(
                 top_image=top_image,
-                wrist_left_image=wrist_left_image,
                 robot_state=robot_state,
                 previous_chunk=previous_for_legato,
                 prefix_len=prefix_len,

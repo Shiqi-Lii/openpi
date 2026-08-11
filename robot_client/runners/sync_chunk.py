@@ -17,11 +17,9 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
 
     while True:
         print(f"Reading observation before request; executed_steps={executed_steps}")
-        top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
+        top_image, robot_state = read_observation(ros_io, mock=mock)
         print(f"Requesting action chunk from OpenPI server; state={format_state(robot_state)}")
-        action_chunk = client.infer(
-            top_image=top_image, wrist_left_image=wrist_left_image, robot_state=robot_state
-        )
+        action_chunk = client.infer(top_image=top_image, robot_state=robot_state)
         print(f"Received action chunk: shape={tuple(action_chunk.shape)}")
         if config.open_loop_horizon > 0:
             action_chunk = action_chunk[: config.open_loop_horizon]
@@ -42,4 +40,3 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
         if once:
             print("--once enabled; stopping after one chunk.")
             return
-

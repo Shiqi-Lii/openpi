@@ -5,7 +5,7 @@ Topics are aligned with:
 - /home/pc/VLA/robot_control_pc
 
 Only the policy-relevant signals are handled here:
-top/left-wrist cameras, left/right joint positions, and PLC-style left/right gripper control.
+top camera, left/right joint positions, and PLC-style left/right gripper control.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ class NZ100Ros2IO:
         self._node = None
 
         self._latest_top_image = None
-        self._latest_wrist_left_image = None
         self._latest_joint_state = None
         self._latest_left_gripper = float(config.gripper_default_value)
         self._latest_right_gripper = float(config.gripper_default_value)
@@ -64,9 +63,6 @@ class NZ100Ros2IO:
 
         self._node = _NZ100Node("openpi_nz100_robot_client")
         self._node.create_subscription(Image, self.config.top_camera_topic, self._on_top_image, 10)
-        self._node.create_subscription(
-            Image, self.config.wrist_left_camera_topic, self._on_wrist_left_image, 10
-        )
         self._node.create_subscription(JointState, self.config.joint_state_topic, self._on_joint_state, 100)
 
         self._left_trajectory_pub = self._node.create_publisher(
@@ -86,7 +82,6 @@ class NZ100Ros2IO:
         print(
             "Waiting for first NZ100 observation: "
             f"top_camera={self.config.top_camera_topic}, "
-            f"wrist_left_camera={self.config.wrist_left_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"gripper_state={self.config.gripper_state_topic}"
         )
@@ -94,7 +89,6 @@ class NZ100Ros2IO:
         print(
             "NZ100 ROS2 IO connected: "
             f"top_camera={self.config.top_camera_topic}, "
-            f"wrist_left_camera={self.config.wrist_left_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_traj={self.config.left_trajectory_topic}, "
             f"right_traj={self.config.right_trajectory_topic}, "
@@ -114,11 +108,6 @@ class NZ100Ros2IO:
         if self._latest_top_image is None:
             self._wait_for_first_observation(require_image=True, require_joint_state=False)
         return _image_msg_to_rgb(self._latest_top_image)
-
-    def get_wrist_left_image(self) -> np.ndarray:
-        if self._latest_wrist_left_image is None:
-            self._wait_for_first_observation(require_image=True, require_joint_state=False)
-        return _image_msg_to_rgb(self._latest_wrist_left_image)
 
     def get_robot_state(self) -> NZ100RobotState:
         if self._latest_joint_state is None:
@@ -186,9 +175,6 @@ class NZ100Ros2IO:
 
     def _on_top_image(self, msg) -> None:
         self._latest_top_image = msg
-
-    def _on_wrist_left_image(self, msg) -> None:
-        self._latest_wrist_left_image = msg
 
     def _on_joint_state(self, msg) -> None:
         self._latest_joint_state = msg
@@ -275,9 +261,7 @@ class NZ100Ros2IO:
     ) -> None:
         last_status_time = 0.0
         while True:
-            image_ok = (
-                self._latest_top_image is not None and self._latest_wrist_left_image is not None
-            ) or not require_image
+            image_ok = self._latest_top_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             gripper_ok = (
                 self._received_left_gripper_state and self._received_right_gripper_state
@@ -295,8 +279,6 @@ class NZ100Ros2IO:
                 missing = []
                 if require_image and self._latest_top_image is None:
                     missing.append(self.config.top_camera_topic)
-                if require_image and self._latest_wrist_left_image is None:
-                    missing.append(self.config.wrist_left_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
                 if require_gripper_state:

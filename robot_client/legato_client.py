@@ -46,7 +46,6 @@ class NZ100LegatoClient:
         self,
         *,
         top_image: np.ndarray,
-        wrist_left_image: np.ndarray,
         robot_state: NZ100RobotState,
         previous_chunk: np.ndarray | None = None,
         prefix_len: int | None = None,
@@ -57,15 +56,10 @@ class NZ100LegatoClient:
 
         image = image_tools.resize_with_pad(top_image, self._config.image_size, self._config.image_size)
         image = image_tools.convert_to_uint8(image)
-        wrist_left_image = image_tools.resize_with_pad(
-            wrist_left_image, self._config.image_size, self._config.image_size
-        )
-        wrist_left_image = image_tools.convert_to_uint8(wrist_left_image)
 
         observation = {
             "images": {
                 "cam_high": image,
-                "cam_left_wrist": wrist_left_image,
             },
             "state": build_raw_state(robot_state),
             "prompt": self._config.prompt if prompt is None else prompt,
