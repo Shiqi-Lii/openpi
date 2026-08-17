@@ -1,4 +1,4 @@
-"""ROS 2 IO implementation for the NZ100 robot client.
+"""Robot IO implementation for the NZ100 robot client.
 
 Topics are aligned with:
 - /home/pc/VLA/lerobot_data_collection
@@ -10,8 +10,10 @@ top camera, left/right joint positions, and PLC-style left/right gripper control
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -29,20 +31,21 @@ class NZ100Ros2IO:
         self._executor = None
         self._executor_thread: threading.Thread | None = None
         self._node = None
+        self._robot = None
+        self._arm_type = None
 
         self._latest_top_image = None
         self._latest_joint_state = None
         self._latest_left_gripper = float(config.gripper_default_value)
         self._latest_right_gripper = float(config.gripper_default_value)
-        self._received_left_gripper_state = False
-        self._received_right_gripper_state = False
+        self._last_left_gripper_cmd: int | None = None
+        self._last_right_gripper_cmd: int | None = None
 
         self._left_trajectory_pub = None
         self._right_trajectory_pub = None
-        self._modbus_gripper_pub = None
 
     def connect(self) -> None:
-        print("Connecting to NZ100 ROS2 IO...")
+        print("Connecting to NZ100 camera ROS2 topic and YSRobot SDK...")
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
@@ -54,7 +57,34 @@ class NZ100Ros2IO:
                 "ROS 2 dependencies are not available. Source ROS 2 and the robot workspace before running."
             ) from exc
 
+        sdk_path = str(Path(self.config.ysrobot_sdk_path).expanduser())
+        if sdk_path not in sys.path:
+            sys.path.insert(0, sdk_path)
+        try:
+            from ysrobot import ArmType, RobotClient
+        except ImportError as exc:
+            raise RuntimeError(
+                f"YSRobot SDK is not available from {sdk_path}. Check ysrobot_sdk_path in the client config."
+            ) from exc
+
         self._rclpy = rclpy
+        self._arm_type = ArmType
+        self._robot = RobotClient(
+            self.config.ysrobot_host,
+            port=int(self.config.ysrobot_port),
+            timeout_ms=int(self.config.ysrobot_timeout_ms),
+        )
+
+        result = self._robot.login(self.config.ysrobot_login_level, self.config.ysrobot_login_pin)
+        print("YSRobot login:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"YSRobot login failed: {result.message}")
+
+        result = self._robot.connect()
+        print("YSRobot connect:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"YSRobot connect failed: {result.message}")
+
         if not rclpy.ok():
             rclpy.init()
 
@@ -72,8 +102,6 @@ class NZ100Ros2IO:
             JointTrajectory, self.config.right_trajectory_topic, 10
         )
 
-        self._setup_gripper_io()
-
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self._node)
         self._executor_thread = threading.Thread(target=self._spin, daemon=True)
@@ -83,19 +111,21 @@ class NZ100Ros2IO:
             "Waiting for first NZ100 observation: "
             f"top_camera={self.config.top_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
-            f"gripper_state={self.config.gripper_state_topic}"
+            f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
         )
-        self._wait_for_first_observation()
+        self._wait_for_first_observation(require_gripper_state=False)
         print(
-            "NZ100 ROS2 IO connected: "
+            "NZ100 IO connected: "
             f"top_camera={self.config.top_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_traj={self.config.left_trajectory_topic}, "
             f"right_traj={self.config.right_trajectory_topic}, "
-            f"gripper_cmd={self.config.gripper_cmd_topic}"
+            f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
         )
 
     def disconnect(self) -> None:
+        if self._robot is not None:
+            self._robot.disconnect()
         if self._executor is not None:
             self._executor.shutdown()
         if self._node is not None:
@@ -111,7 +141,7 @@ class NZ100Ros2IO:
 
     def get_robot_state(self) -> NZ100RobotState:
         if self._latest_joint_state is None:
-            self._wait_for_first_observation(require_image=False, require_joint_state=True)
+            self._wait_for_first_observation(require_image=False, require_joint_state=True, require_gripper_state=False)
         return NZ100RobotState(
             left_joints=self._extract_named_positions(self.config.left_joint_names),
             right_joints=self._extract_named_positions(self.config.right_joint_names),
@@ -130,7 +160,53 @@ class NZ100Ros2IO:
             list(self.config.right_joint_names),
             np.asarray(action.right_joints, dtype=np.float64),
         )
-        self._publish_grippers(action.left_gripper, action.right_gripper)
+        self._control_grippers(action.left_gripper, action.right_gripper)
+
+    def set_cached_gripper_state(self, *, left: float | None = None, right: float | None = None) -> None:
+        """Update cached PLC gripper state after an out-of-band command.
+
+        Multi-stage control may command the gripper directly through the SDK
+        while VLA is paused. The policy observation uses this cache, so keep it
+        aligned with the real gripper before resuming VLA.
+        """
+
+        if left is not None:
+            left_command = int(left)
+            self._latest_left_gripper = float(left_command)
+            self._last_left_gripper_cmd = left_command
+        if right is not None:
+            right_command = int(right)
+            self._latest_right_gripper = float(right_command)
+            self._last_right_gripper_cmd = right_command
+
+    def hold_current_joint_positions(self, *, duration_s: float = 0.1) -> None:
+        """Publish a short hold command at the measured current joint positions.
+
+        Multi-stage control hands the left arm from the streaming VLA trajectory
+        publisher to the SDK ``move_l`` planner. Sending one measured-current
+        joint target first avoids handing over from a still-moving short-horizon
+        VLA target, which can otherwise cause a small twitch at the first
+        ``move_l``.
+        """
+
+        if self._latest_joint_state is None:
+            self._wait_for_first_observation(require_image=False, require_joint_state=True, require_gripper_state=False)
+        left_positions = self._extract_named_positions(self.config.left_joint_names).astype(np.float64)
+        right_positions = self._extract_named_positions(self.config.right_joint_names).astype(np.float64)
+        print(f"Holding current joint positions before SDK move_l handoff: duration={duration_s:.2f}s")
+        self._publish_joint_trajectory(
+            self._left_trajectory_pub,
+            list(self.config.left_joint_names),
+            left_positions,
+            duration_s=duration_s,
+        )
+        self._publish_joint_trajectory(
+            self._right_trajectory_pub,
+            list(self.config.right_joint_names),
+            right_positions,
+            duration_s=duration_s,
+        )
+        time.sleep(max(float(duration_s), 0.0))
 
     def move_to_home(self) -> None:
         """Move both arms to the configured startup pose before inference."""
@@ -154,7 +230,7 @@ class NZ100Ros2IO:
             duration_s=duration_s,
         )
         open_value = float(self.config.modbus_open_value)
-        self._publish_grippers(open_value, open_value)
+        self._control_grippers(open_value, open_value)
         time.sleep(duration_s)
         print("NZ100 startup pose command completed; starting policy inference.")
 
@@ -162,39 +238,11 @@ class NZ100Ros2IO:
         while self._rclpy.ok():
             self._executor.spin_once(timeout_sec=0.1)
 
-    def _setup_gripper_io(self) -> None:
-        try:
-            from interfaces.msg import Modbus
-        except ImportError as exc:
-            raise RuntimeError(
-                "interfaces/msg/Modbus is required for NZ100 gripper control. "
-                "Source the robot workspace that provides interfaces.msg.Modbus."
-            ) from exc
-        self._node.create_subscription(Modbus, self.config.gripper_state_topic, self._on_modbus_gripper_state, 100)
-        self._modbus_gripper_pub = self._node.create_publisher(Modbus, self.config.gripper_cmd_topic, 10)
-
     def _on_top_image(self, msg) -> None:
         self._latest_top_image = msg
 
     def _on_joint_state(self, msg) -> None:
         self._latest_joint_state = msg
-
-    def _on_modbus_gripper_state(self, msg) -> None:
-        names = list(msg.in_out)
-        values = list(msg.values)
-        for index, name in enumerate(names):
-            if index >= len(values):
-                break
-            if name == self.config.left_gripper_key:
-                self._latest_left_gripper = _modbus_to_policy_value(
-                    values[index], self.config.modbus_open_value, self.config.modbus_closed_value
-                )
-                self._received_left_gripper_state = True
-            elif name == self.config.right_gripper_key:
-                self._latest_right_gripper = _modbus_to_policy_value(
-                    values[index], self.config.modbus_open_value, self.config.modbus_closed_value
-                )
-                self._received_right_gripper_state = True
 
     def _extract_named_positions(self, joint_names: tuple[str, ...]) -> np.ndarray:
         msg = self._latest_joint_state
@@ -235,22 +283,25 @@ class NZ100Ros2IO:
         msg.points = [point]
         publisher.publish(msg)
 
-    def _publish_grippers(self, left_value: float, right_value: float) -> None:
-        self._publish_modbus_grippers(left_value, right_value)
-
-    def _publish_modbus_grippers(self, left_value: float, right_value: float) -> None:
-        from interfaces.msg import Modbus
-
-        if self._modbus_gripper_pub is None:
-            return
-        msg = Modbus()
-        msg.header.stamp = self._node.get_clock().now().to_msg()
-        msg.in_out = [self.config.left_gripper_key, self.config.right_gripper_key]
-        msg.values = [
-            _policy_value_to_modbus(left_value, self.config.modbus_open_value, self.config.modbus_closed_value),
-            _policy_value_to_modbus(right_value, self.config.modbus_open_value, self.config.modbus_closed_value),
-        ]
-        self._modbus_gripper_pub.publish(msg)
+    def _control_grippers(self, left_value: float, right_value: float) -> None:
+        left_command = _policy_value_to_modbus(left_value, self.config.modbus_open_value, self.config.modbus_closed_value)
+        right_command = _policy_value_to_modbus(
+            right_value, self.config.modbus_open_value, self.config.modbus_closed_value
+        )
+        if left_command != self._last_left_gripper_cmd:
+            left_result = self._robot.device.write_modbus(int(self.config.left_gripper_modbus_address), left_command)
+            if not left_result:
+                print(f"Warning: YSRobot left gripper Modbus command failed: {left_result.message}")
+            else:
+                self._last_left_gripper_cmd = left_command
+                self._latest_left_gripper = float(left_command)
+        if right_command != self._last_right_gripper_cmd:
+            right_result = self._robot.device.write_modbus(int(self.config.right_gripper_modbus_address), right_command)
+            if not right_result:
+                print(f"Warning: YSRobot right gripper Modbus command failed: {right_result.message}")
+            else:
+                self._last_right_gripper_cmd = right_command
+                self._latest_right_gripper = float(right_command)
 
     def _wait_for_first_observation(
         self,
@@ -263,9 +314,7 @@ class NZ100Ros2IO:
         while True:
             image_ok = self._latest_top_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
-            gripper_ok = (
-                self._received_left_gripper_state and self._received_right_gripper_state
-            ) or not require_gripper_state
+            gripper_ok = True  # Gripper state uses the last commanded/default policy value.
             if image_ok and joint_ok and gripper_ok:
                 print(
                     "First NZ100 observation received: "
@@ -281,14 +330,6 @@ class NZ100Ros2IO:
                     missing.append(self.config.top_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
-                if require_gripper_state:
-                    gripper_missing = []
-                    if not self._received_left_gripper_state:
-                        gripper_missing.append(self.config.left_gripper_key)
-                    if not self._received_right_gripper_state:
-                        gripper_missing.append(self.config.right_gripper_key)
-                    if gripper_missing:
-                        missing.append(f"{self.config.gripper_state_topic} keys={gripper_missing}")
                 print(f"Waiting for ROS2 topics: {missing}")
                 last_status_time = now
             time.sleep(0.05)

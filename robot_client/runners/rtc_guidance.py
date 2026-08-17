@@ -12,6 +12,7 @@ import numpy as np
 from robot_client.config import ClientConfig
 from robot_client.ros2_io import NZ100Ros2IO
 from robot_client.rtc_client import NZ100RTCClient
+from robot_client.runtime_control import RuntimeControl
 from robot_client.runners.common import format_action
 from robot_client.runners.common import format_state
 from robot_client.runners.common import read_observation
@@ -36,45 +37,81 @@ class RTCSharedState:
     error: BaseException | None = None
 
 
-def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
+def run(
+    config: ClientConfig,
+    *,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+    once: bool,
+    runtime_control: RuntimeControl | None = None,
+) -> None:
     client = NZ100RTCClient(config)
     executed_steps = 0
     print(f"Entering {config.execution_mode} control loop.")
     if config.control_hz <= 0:
         raise ValueError(f"control_hz must be positive for RTC, got {config.control_hz}")
 
-    print("Reading initial observation for RTC.")
-    top_image, robot_state = read_observation(ros_io, mock=mock)
-    print(f"Requesting initial RTC action chunk; state={format_state(robot_state)}")
-    inference_start_s = time.monotonic()
-    current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
-    inference_elapsed_s = time.monotonic() - inference_start_s
-    print(
-        "Received initial RTC chunk: "
-        f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
-    )
-    if config.open_loop_horizon > 0:
-        current_chunk = current_chunk[: config.open_loop_horizon]
-    if current_chunk.shape[0] == 0:
-        raise ValueError("Initial RTC action chunk is empty")
+    def create_rtc_state(reason: str) -> tuple[threading.Condition, RTCSharedState, threading.Thread]:
+        print(f"Reading observation for RTC ({reason}).")
+        top_image, robot_state = read_observation(ros_io, mock=mock)
+        print(f"Requesting RTC action chunk ({reason}); state={format_state(robot_state)}")
+        inference_start_s = time.monotonic()
+        current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+        inference_elapsed_s = time.monotonic() - inference_start_s
+        print(
+            f"Received RTC chunk ({reason}): "
+            f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
+        )
+        if config.open_loop_horizon > 0:
+            current_chunk = current_chunk[: config.open_loop_horizon]
+        if current_chunk.shape[0] == 0:
+            raise ValueError("RTC action chunk is empty")
 
-    condition = threading.Condition()
-    shared = RTCSharedState(ctx=RTCActionContext(raw_chunk=current_chunk, step_index=0))
-    delay_buffer = collections.deque(
-        [_clamp_rtc_delay_steps(int(config.rtc_prefix_len), config)],
-        maxlen=max(1, int(config.rtc_delay_buffer_size)),
-    )
-    inference_thread = threading.Thread(
-        target=_rtc_inference_loop,
-        args=(config, client, ros_io, mock, shared, condition, delay_buffer),
-        daemon=True,
-    )
-    inference_thread.start()
+        new_condition = threading.Condition()
+        new_shared = RTCSharedState(ctx=RTCActionContext(raw_chunk=current_chunk, step_index=0))
+        new_delay_buffer = collections.deque(
+            [_clamp_rtc_delay_steps(int(config.rtc_prefix_len), config)],
+            maxlen=max(1, int(config.rtc_delay_buffer_size)),
+        )
+        new_inference_thread = threading.Thread(
+            target=_rtc_inference_loop,
+            args=(config, client, ros_io, mock, new_shared, new_condition, new_delay_buffer),
+            daemon=True,
+        )
+        new_inference_thread.start()
+        return new_condition, new_shared, new_inference_thread
+
+    condition, shared, inference_thread = create_rtc_state("initial")
 
     period_s = 1.0 / config.control_hz
     next_tick = time.monotonic()
     try:
         while True:
+            if runtime_control is not None and runtime_control.stop_event.is_set():
+                print("RTC stop requested; exiting control loop.")
+                return
+
+            if runtime_control is not None and runtime_control.pause_event.is_set():
+                print("RTC pause requested; stopping current chunk and background inference.")
+                with condition:
+                    shared.stop = True
+                    condition.notify_all()
+                inference_thread.join()
+                runtime_control.paused_event.set()
+                if runtime_control.on_pause is not None:
+                    runtime_control.on_pause()
+                print("RTC waiting for resume signal.")
+                while not runtime_control.resume_event.wait(timeout=0.05):
+                    if runtime_control.stop_event.is_set():
+                        print("RTC stop requested while paused; exiting.")
+                        return
+                runtime_control.resume_event.clear()
+                runtime_control.pause_event.clear()
+                runtime_control.paused_event.clear()
+                condition, shared, inference_thread = create_rtc_state("resume")
+                next_tick = time.monotonic()
+                continue
+
             with condition:
                 if shared.error is not None:
                     raise RuntimeError("RTC background inference failed") from shared.error

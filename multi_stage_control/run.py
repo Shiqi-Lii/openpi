@@ -1,214 +1,526 @@
 #!/usr/bin/env python3
+"""Run VLA continuously and interrupt it with a perception-triggered grasp slot.
+
+The VLA client stays alive in this process. A monitor thread polls:
+1. YOLO bottle center xyz from an HTTP endpoint;
+2. left TCP xyz from YSRobot SDK ``motion.get_pose``.
+
+When the distance is below a threshold, the monitor requests a pause. The RTC
+runner pauses on the next action boundary, runs a placeholder grasp policy, then
+resumes VLA from a fresh observation/action chunk.
+"""
+
+from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
-import subprocess
+import math
 import sys
-import tempfile
+import threading
 import time
+import urllib.request
 from pathlib import Path
+from typing import Any
 
-import rclpy
-from builtin_interfaces.msg import Duration
-from interfaces.msg import Modbus
-from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-
-
-def make_trajectory(side: str, positions: list[float], duration: float) -> JointTrajectory:
-    if len(positions) != 7 or duration <= 0:
-        raise ValueError("plan requires 7 joint positions and duration > 0")
-    nanoseconds = round(duration * 1_000_000_000)
-    point = JointTrajectoryPoint()
-    point.positions = [float(value) for value in positions]
-    point.time_from_start = Duration(
-        sec=nanoseconds // 1_000_000_000,
-        nanosec=nanoseconds % 1_000_000_000,
-    )
-    msg = JointTrajectory()
-    msg.joint_names = [f"{side}_joint{i}" for i in range(1, 8)]
-    msg.points = [point]
-    return msg
+from robot_client.config import AppConfig
+from robot_client.config import ClientConfig
+from robot_client.config import load_app_config
+from robot_client.ros2_io import NZ100Ros2IO
+from robot_client.runners import async_queue
+from robot_client.runners import rtc_guidance
+from robot_client.runtime_control import RuntimeControl
 
 
-class Planner:
-    def __init__(self) -> None:
-        rclpy.init()
-        self.node = Node("multi_stage_control")
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=10,
-        )
-        self.left = self.node.create_publisher(
-            JointTrajectory, "/arm_left_controller/joint_trajectory", qos
-        )
-        self.right = self.node.create_publisher(
-            JointTrajectory, "/arm_right_controller/joint_trajectory", qos
-        )
-        self.grippers = self.node.create_publisher(Modbus, "/robot/api/io/cmd", 10)
+@dataclasses.dataclass(frozen=True)
+class InterruptionConfig:
+    """Perception-triggered interruption settings."""
 
-    def gripper_message(self, stage: dict) -> Modbus | None:
-        if "left_gripper" not in stage and "right_gripper" not in stage:
+    robot_client_config: str = "robot_client/configs/nz100_client.yaml"
+    yolo_url: str | None = None
+    yolo_timeout_s: float = 0.05
+    poll_hz: float = 20.0
+    distance_threshold_m: float = 0.05
+    cooldown_s: float = 2.0
+    max_interruptions: int = 1
+    left_pose_frame: str | None = None
+    grasp_move_vel: float = 5.0
+    grasp_move_acc: float = 20.0
+    grasp_move_planner: str = "pilz"
+    handoff_hold_enabled: bool = True
+    handoff_hold_s: float = 0.1
+    lift_mm: float = 60.0
+    no_lift: bool = False
+    gripper_register: int = 9661
+    gripper_close_value: int = 2
+    gripper_settle_s: float = 1.0
+    mock_yolo_xyz: tuple[float, float, float] | None = None
+
+
+def load_interruption_config(path: Path | None) -> InterruptionConfig:
+    if path is None:
+        return InterruptionConfig()
+    with path.open("r", encoding="utf-8") as file:
+        if path.suffix in {".yaml", ".yml"}:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise RuntimeError("PyYAML is required for YAML configs. Install with: pip install pyyaml") from exc
+            data = yaml.safe_load(file)
+        else:
+            data = json.load(file)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return InterruptionConfig(**_filter_kwargs(InterruptionConfig, data))
+
+
+def _filter_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    valid = {field.name for field in dataclasses.fields(cls)}
+    result = {}
+    for key, value in data.items():
+        if key not in valid:
+            continue
+        if key == "mock_yolo_xyz" and value is not None:
+            value = tuple(float(v) for v in value)
+        result[key] = value
+    return result
+
+
+@dataclasses.dataclass(frozen=True)
+class VisionTarget:
+    pose_7d_m: list[float]
+
+
+class YoloHttpClient:
+    """HTTP client for the bottle target service."""
+
+    def __init__(
+        self,
+        url: str | None,
+        *,
+        timeout_s: float,
+        mock_xyz: tuple[float, float, float] | None,
+    ) -> None:
+        self._url = url
+        self._timeout_s = timeout_s
+        self._mock_xyz = mock_xyz
+
+    def get_bottle_xyz(self) -> tuple[float, float, float] | None:
+        target = self.get_bottle_target()
+        if target is None:
             return None
-        if "left_gripper" not in stage or "right_gripper" not in stage:
-            raise ValueError("plan must set both left_gripper and right_gripper")
-        values = {"open": 1, "close": 2}
-        left = stage["left_gripper"]
-        right = stage["right_gripper"]
-        if left not in values or right not in values:
-            raise ValueError("left_gripper/right_gripper must be 'open' or 'close'")
-        msg = Modbus()
-        msg.header.stamp = self.node.get_clock().now().to_msg()
-        msg.in_out = ["an_out_d9746", "an_out_d9747"]
-        msg.values = [values[left], values[right]]
-        return msg
+        return float(target.pose_7d_m[0]), float(target.pose_7d_m[1]), float(target.pose_7d_m[2])
 
-    def move(self, stage: dict, prefetch=None, prefetch_before: float = 0.0) -> None:
-        gripper_msg = self.gripper_message(stage)
-        deadline = time.monotonic() + 5.0
-        while (
-            self.left.get_subscription_count() == 0
-            or self.right.get_subscription_count() == 0
-            or (gripper_msg is not None and self.grippers.get_subscription_count() == 0)
-        ):
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Arm or gripper controller subscribers not found")
-            rclpy.spin_once(self.node, timeout_sec=0.1)
+    def get_bottle_grasp_pose(self) -> list[float] | None:
+        target = self.get_bottle_target()
+        return None if target is None else target.pose_7d_m
 
-        duration = float(stage["duration"])
-        left_msg = make_trajectory("left", stage["left_positions"], duration)
-        right_msg = make_trajectory("right", stage["right_positions"], duration)
-        for _ in range(3):
-            self.left.publish(left_msg)
-            self.right.publish(right_msg)
-            if gripper_msg is not None:
-                gripper_msg.header.stamp = self.node.get_clock().now().to_msg()
-                self.grippers.publish(gripper_msg)
-            rclpy.spin_once(self.node, timeout_sec=0.02)
+    def get_bottle_target(self) -> VisionTarget | None:
+        if self._mock_xyz is not None:
+            return VisionTarget([*self._mock_xyz, 0.0, 0.0, 0.0, 1.0])
+        if not self._url:
+            return None
+        try:
+            payload = _http_get_json(self._url, timeout_s=self._timeout_s)
+        except Exception as exc:
+            print(f"YOLO target request failed: {exc}")
+            return None
+        pose = _extract_pose_7d(payload)
+        if pose is None:
+            return None
+        return VisionTarget(pose)
 
-        self.node.get_logger().info(f"Plan sent; waiting {duration:g} s before next stage")
-        end = time.monotonic() + duration
-        next_gripper_publish = time.monotonic() + 0.1
-        prefetched = False
-        while time.monotonic() < end:
-            if gripper_msg is not None and time.monotonic() >= next_gripper_publish:
-                gripper_msg.header.stamp = self.node.get_clock().now().to_msg()
-                self.grippers.publish(gripper_msg)
-                next_gripper_publish += 0.1
-            if prefetch is not None and not prefetched and end - time.monotonic() <= prefetch_before:
-                prefetch()
-                prefetched = True
-            remaining = max(0.0, end - time.monotonic())
-            rclpy.spin_once(self.node, timeout_sec=min(0.1, remaining))
-        if prefetch is not None and not prefetched:
-            prefetch()
+    def get_lift_pose(self, target: VisionTarget, *, lift_mm: float) -> list[float]:
+        """Lift along robot-default/base +Z without using grasp/latest."""
+
+        lift_pose = [
+            target.pose_7d_m[0],
+            target.pose_7d_m[1],
+            target.pose_7d_m[2] + float(lift_mm) / 1000.0,
+            *target.pose_7d_m[3:7],
+        ]
+        print(f"Lift target pose_7d_m: {lift_pose} from base +Z, lift_mm={lift_mm}")
+        return lift_pose
+
+
+class LeftTcpPoseClient:
+    """Reads left TCP xyz with YSRobot SDK."""
+
+    def __init__(self, app_config: AppConfig, *, frame: str | None) -> None:
+        sdk_path = str(Path(app_config.ros2.ysrobot_sdk_path).expanduser())
+        if sdk_path not in sys.path:
+            sys.path.insert(0, sdk_path)
+        from ysrobot import ArmType, RobotClient
+
+        self._arm_type = ArmType
+        self._frame = frame
+        self._robot = RobotClient(
+            app_config.ros2.ysrobot_host,
+            port=int(app_config.ros2.ysrobot_port),
+            timeout_ms=int(app_config.ros2.ysrobot_timeout_ms),
+        )
+        result = self._robot.login(app_config.ros2.ysrobot_login_level, app_config.ros2.ysrobot_login_pin)
+        print("Monitor YSRobot login:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"YSRobot login failed: {result.message}")
+        result = self._robot.connect()
+        print("Monitor YSRobot connect:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"YSRobot connect failed: {result.message}")
+
+    def get_left_xyz(self) -> tuple[float, float, float]:
+        pose = self._robot.motion.get_pose(self._arm_type.Left, frame=self._frame)
+        return float(pose.x), float(pose.y), float(pose.z)
+
+    def get_left_pose_7d(self) -> list[float]:
+        pose = self._robot.motion.get_pose(self._arm_type.Left, frame=self._frame)
+        return [
+            float(pose.x),
+            float(pose.y),
+            float(pose.z),
+            float(pose.qx),
+            float(pose.qy),
+            float(pose.qz),
+            float(pose.qw),
+        ]
+
+    def with_current_left_orientation(self, pose_7d_m: list[float]) -> list[float]:
+        if len(pose_7d_m) != 7:
+            raise ValueError(f"Expected 7D target pose, got {len(pose_7d_m)} values: {pose_7d_m}")
+        current = self.get_left_pose_7d()
+        merged = [float(pose_7d_m[0]), float(pose_7d_m[1]), float(pose_7d_m[2]), *current[3:7]]
+        print("Using current left TCP orientation for target pose:", merged)
+        return merged
+
+    def move_left_to_pose(
+        self,
+        pose_7d_m: list[float],
+        *,
+        vel: float,
+        acc: float,
+        planner: str,
+    ) -> None:
+        if len(pose_7d_m) != 7:
+            raise ValueError(f"Expected 7D target pose, got {len(pose_7d_m)} values: {pose_7d_m}")
+        result = self._robot.motion.move_l(
+            arm=self._arm_type.Left,
+            pose=[float(value) for value in pose_7d_m],
+            vel=vel,
+            acc=acc,
+            wait=True,
+            planner=planner,
+        )
+        print("Grasp move_l result:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"YSRobot move_l failed: {result.message}")
+
+    def close_left_gripper(self, *, register: int, close_value: int, settle_s: float) -> None:
+        result = self._robot.device.write_modbus(int(register), int(close_value))
+        print("Gripper close result:", result.success, result.message)
+        if not result:
+            raise RuntimeError(f"gripper CLOSE failed: {result.message}")
+        time.sleep(float(settle_s))
 
     def close(self) -> None:
-        self.node.destroy_node()
-        rclpy.shutdown()
+        self._robot.disconnect()
+
+
+class MockLeftTcpPoseClient:
+    def get_left_xyz(self) -> tuple[float, float, float]:
+        return 0.0, 0.0, 0.0
+
+    def get_left_pose_7d(self) -> list[float]:
+        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+    def with_current_left_orientation(self, pose_7d_m: list[float]) -> list[float]:
+        return [float(pose_7d_m[0]), float(pose_7d_m[1]), float(pose_7d_m[2]), 0.0, 0.0, 0.0, 1.0]
+
+    def close(self) -> None:
+        pass
+
+    def move_left_to_pose(
+        self,
+        pose_7d_m: list[float],
+        *,
+        vel: float,
+        acc: float,
+        planner: str,
+    ) -> None:
+        print(f"[mock] move_l left pose={pose_7d_m}, vel={vel}, acc={acc}, planner={planner}")
+
+    def close_left_gripper(self, *, register: int, close_value: int, settle_s: float) -> None:
+        print(f"[mock] close gripper register={register}, value={close_value}, settle_s={settle_s}")
+
+
+class InterruptionMonitor:
+    """Requests VLA pauses when bottle and left TCP are close enough."""
+
+    def __init__(
+        self,
+        config: InterruptionConfig,
+        *,
+        yolo: YoloHttpClient,
+        pose_client: LeftTcpPoseClient | MockLeftTcpPoseClient,
+        runtime_control: RuntimeControl,
+    ) -> None:
+        self._config = config
+        self._yolo = yolo
+        self._pose_client = pose_client
+        self._runtime_control = runtime_control
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._interruptions = 0
+        self._last_interrupt_time = 0.0
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="vla_interruption_monitor", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        period_s = 1.0 / max(float(self._config.poll_hz), 1e-6)
+        while not self._stop.is_set() and not self._runtime_control.stop_event.is_set():
+            try:
+                self._poll_once()
+            except Exception as exc:
+                print(f"Interruption monitor error: {exc}")
+            time.sleep(period_s)
+
+    def _poll_once(self) -> None:
+        if self._runtime_control.pause_event.is_set() or self._runtime_control.paused_event.is_set():
+            return
+        if self._config.max_interruptions > 0 and self._interruptions >= self._config.max_interruptions:
+            return
+        now = time.monotonic()
+        if now - self._last_interrupt_time < float(self._config.cooldown_s):
+            return
+
+        bottle_xyz = self._yolo.get_bottle_xyz()
+        if bottle_xyz is None:
+            return
+        left_xyz = self._pose_client.get_left_xyz()
+        distance = _distance(left_xyz, bottle_xyz)
+        print(
+            "VLA interruption monitor: "
+            f"left_tcp={_fmt_xyz(left_xyz)}, bottle={_fmt_xyz(bottle_xyz)}, distance={distance:.4f}m"
+        )
+        if distance <= float(self._config.distance_threshold_m):
+            self._interruptions += 1
+            self._last_interrupt_time = now
+            print(
+                "VLA interruption trigger: "
+                f"distance={distance:.4f}m <= threshold={self._config.distance_threshold_m:.4f}m"
+            )
+            self._runtime_control.request_pause()
+
+
+def _grasp_policy(
+    runtime_control: RuntimeControl,
+    *,
+    yolo: YoloHttpClient,
+    pose_client: LeftTcpPoseClient | MockLeftTcpPoseClient,
+    ros_io: NZ100Ros2IO | None,
+    config: InterruptionConfig,
+) -> None:
+    """Middle grasp slot: move left TCP to the latest vision target pose."""
+
+    print("VLA paused. Requesting latest bottle grasp target for middle policy...")
+    target = yolo.get_bottle_target()
+    if target is None:
+        print("No valid bottle grasp target; skipping grasp policy and resuming VLA.")
+        runtime_control.resume()
+        return
+    print("Bottle grasp target pose_7d_m:", target.pose_7d_m)
+    grasp_pose = pose_client.with_current_left_orientation(target.pose_7d_m)
+    if ros_io is not None and bool(config.handoff_hold_enabled):
+        ros_io.hold_current_joint_positions(duration_s=float(config.handoff_hold_s))
+    print("\n[1/3] move_l -> GRASP")
+    pose_client.move_left_to_pose(
+        grasp_pose,
+        vel=float(config.grasp_move_vel),
+        acc=float(config.grasp_move_acc),
+        planner=str(config.grasp_move_planner),
+    )
+    print("\n[2/3] CLOSE gripper")
+    pose_client.close_left_gripper(
+        register=int(config.gripper_register),
+        close_value=int(config.gripper_close_value),
+        settle_s=float(config.gripper_settle_s),
+    )
+    if ros_io is not None:
+        ros_io.set_cached_gripper_state(left=float(config.gripper_close_value))
+    if not bool(config.no_lift):
+        print("\n[3/3] move_l -> LIFT")
+        lift_target = VisionTarget(grasp_pose)
+        lift_pose = yolo.get_lift_pose(lift_target, lift_mm=float(config.lift_mm))
+        pose_client.move_left_to_pose(
+            lift_pose,
+            vel=float(config.grasp_move_vel),
+            acc=float(config.grasp_move_acc),
+            planner=str(config.grasp_move_planner),
+        )
+    else:
+        print("\n[3/3] LIFT skipped by no_lift=True")
+    print("Middle grasp policy finished; resuming VLA.")
+    runtime_control.resume()
+
+
+def _extract_xyz(payload: Any) -> tuple[float, float, float] | None:
+    """Accept common YOLO service response shapes."""
+
+    if isinstance(payload, dict):
+        for key in ("xyz", "center_xyz", "bottle_xyz", "center", "position"):
+            xyz = _extract_xyz(payload.get(key))
+            if xyz is not None:
+                return xyz
+        if all(key in payload for key in ("x", "y", "z")):
+            return float(payload["x"]), float(payload["y"]), float(payload["z"])
+        data = payload.get("data")
+        if data is not payload:
+            return _extract_xyz(data)
+    if isinstance(payload, (list, tuple)) and len(payload) >= 3:
+        return float(payload[0]), float(payload[1]), float(payload[2])
+    return None
+
+
+def _extract_pose_7d(payload: Any) -> list[float] | None:
+    """Parse the bottle service response and return target.pose_7d_m."""
+
+    if not isinstance(payload, dict):
+        xyz = _extract_xyz(payload)
+        if xyz is None:
+            return None
+        return [*xyz, 0.0, 0.0, 0.0, 1.0]
+
+    if "valid" in payload and not bool(payload.get("valid")):
+        print(f"Bottle vision target invalid: {payload.get('reason')}")
+        return None
+
+    target = payload.get("target")
+    if isinstance(target, dict) and isinstance(target.get("pose_7d_m"), (list, tuple)):
+        pose = [float(value) for value in target["pose_7d_m"]]
+        if len(pose) >= 7:
+            return pose[:7]
+        print(f"Bottle vision pose_7d_m has too few values: {pose}")
+        return None
+
+    for key in ("pose_7d_m", "target_pose", "pose"):
+        value = payload.get(key)
+        if isinstance(value, (list, tuple)) and len(value) >= 7:
+            return [float(v) for v in value[:7]]
+
+    xyz = _extract_xyz(payload)
+    if xyz is not None:
+        return [*xyz, 0.0, 0.0, 0.0, 1.0]
+    return None
+
+
+def _http_get_json(url: str, *, timeout_s: float) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={"Connection": "close"})
+    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Expected JSON object from {url}, got {type(payload).__name__}")
+    return payload
+
+
+def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+
+
+def _fmt_xyz(xyz: tuple[float, float, float]) -> str:
+    return f"({xyz[0]:.4f}, {xyz[1]:.4f}, {xyz[2]:.4f})"
+
+
+def _build_client_config(client_base: ClientConfig) -> ClientConfig:
+    supported_modes = {"rtc_guidance", "async_queue"}
+    if client_base.execution_mode not in supported_modes:
+        raise ValueError(
+            "multi_stage_control interruption framework currently supports "
+            f"execution_mode={sorted(supported_modes)!r}, "
+            f"got {client_base.execution_mode!r}"
+        )
+    return dataclasses.replace(client_base)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run planned poses followed by VLA control")
+    parser = argparse.ArgumentParser(description="Run continuous VLA with perception-triggered interruption")
     parser.add_argument("config", type=Path, nargs="?", default=Path(__file__).with_name("stages.yaml"))
+    parser.add_argument("--mock", action="store_true", help="Use mock robot observation in the VLA runner")
     args = parser.parse_args()
-    with args.config.open(encoding="utf-8") as file:
-        stages = json.load(file)["stages"]
 
-    planner = None
-    vla_process = None
-    gate_dir = None
-    ready_file = None
-    inference_file = None
-    execute_file = None
+    interruption_config = load_interruption_config(args.config)
+    app_config = load_app_config(interruption_config.robot_client_config)
+    runtime_control = RuntimeControl()
 
-    def start_vla(stage: dict) -> None:
-        nonlocal vla_process, gate_dir, ready_file, inference_file, execute_file
-        if vla_process is not None:
-            return
-        gate_dir = Path(tempfile.mkdtemp(prefix="openpi-vla-gate-"))
-        ready_file = gate_dir / "ready"
-        inference_file = gate_dir / "infer"
-        execute_file = gate_dir / "execute"
-        print("Starting VLA standby process...", flush=True)
-        vla_process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "robot_client.main",
-                "--config",
-                str(stage["config"]),
-                "--skip-home",
-                "--start-signal-file",
-                str(execute_file),
-                "--inference-signal-file",
-                str(inference_file),
-                "--ready-signal-file",
-                str(ready_file),
-            ]
-        )
-
-    def wait_for_vla_ready() -> None:
-        print("Waiting for VLA standby readiness...", flush=True)
-        while not ready_file.exists():
-            returncode = vla_process.poll()
-            if returncode is not None:
-                raise subprocess.CalledProcessError(returncode, vla_process.args)
-            time.sleep(0.05)
-        print("VLA standby ready; starting plan stages.", flush=True)
-
-    def request_vla_inference() -> None:
-        if not inference_file.exists():
-            inference_file.touch()
-            print("VLA initial inference requested.", flush=True)
-
+    ros_io = None
+    pose_client: LeftTcpPoseClient | MockLeftTcpPoseClient | None = None
+    monitor = None
     try:
-        vla_stages = [stage for stage in stages if stage["mode"] == "vla"]
-        if len(vla_stages) != 1 or stages[-1]["mode"] != "vla":
-            raise ValueError("exactly one vla stage is required and it must be last")
-        start_vla(vla_stages[0])
-        wait_for_vla_ready()
-
-        for index, stage in enumerate(stages, start=1):
-            mode = stage["mode"]
-            print(f"Stage {index}/{len(stages)}: {mode}", flush=True)
-            if mode == "plan":
-                planner = planner or Planner()
-                next_stage = stages[index] if index < len(stages) else None
-                if next_stage is not None and next_stage["mode"] == "vla":
-                    lead = float(next_stage.get("prefetch_before", 1.0))
-                    if lead < 0:
-                        raise ValueError("prefetch_before must be >= 0")
-                    planner.move(stage, request_vla_inference, lead)
-                else:
-                    planner.move(stage)
-            elif mode == "vla":
-                if index != len(stages):
-                    raise ValueError("vla must be the last stage")
-                if planner is not None:
-                    planner.close()
-                    planner = None
-                request_vla_inference()
-                execute_file.touch()
-                print("Plan complete; VLA start signal sent.", flush=True)
-                if vla_process.wait() != 0:
-                    raise subprocess.CalledProcessError(vla_process.returncode, vla_process.args)
+        if not args.mock:
+            ros_io = NZ100Ros2IO(app_config.ros2)
+            ros_io.connect()
+            if app_config.ros2.home_on_start:
+                ros_io.move_to_home()
             else:
-                raise ValueError(f"Unknown control mode: {mode!r}")
+                print("Skipping NZ100 startup pose command.")
+
+        if args.mock:
+            pose_client = MockLeftTcpPoseClient()
+        else:
+            pose_client = LeftTcpPoseClient(app_config, frame=interruption_config.left_pose_frame)
+        yolo = YoloHttpClient(
+            interruption_config.yolo_url,
+            timeout_s=float(interruption_config.yolo_timeout_s),
+            mock_xyz=interruption_config.mock_yolo_xyz,
+        )
+        monitor = InterruptionMonitor(
+            interruption_config,
+            yolo=yolo,
+            pose_client=pose_client,
+            runtime_control=runtime_control,
+        )
+        runtime_control.on_pause = lambda: _grasp_policy(
+            runtime_control,
+            yolo=yolo,
+            pose_client=pose_client,
+            ros_io=ros_io,
+            config=interruption_config,
+        )
+        monitor.start()
+
+        print("Starting continuous VLA with interruption monitor.")
+        client_config = _build_client_config(app_config.client)
+        if client_config.execution_mode == "rtc_guidance":
+            rtc_guidance.run(
+                client_config,
+                ros_io=ros_io,
+                mock=args.mock,
+                once=False,
+                runtime_control=runtime_control,
+            )
+        elif client_config.execution_mode == "async_queue":
+            async_queue.run(
+                client_config,
+                ros_io=ros_io,
+                mock=args.mock,
+                once=False,
+                runtime_control=runtime_control,
+            )
+        else:
+            raise ValueError(f"Unsupported execution_mode: {client_config.execution_mode!r}")
     finally:
-        if planner is not None:
-            planner.close()
-        if vla_process is not None and vla_process.poll() is None:
-            vla_process.terminate()
-            vla_process.wait(timeout=5)
-        for signal_file in (ready_file, inference_file, execute_file):
-            if signal_file is not None:
-                signal_file.unlink(missing_ok=True)
-        if gate_dir is not None:
-            gate_dir.rmdir()
+        runtime_control.request_stop()
+        if monitor is not None:
+            monitor.stop()
+        if pose_client is not None:
+            pose_client.close()
+        if ros_io is not None:
+            ros_io.disconnect()
 
 
 if __name__ == "__main__":

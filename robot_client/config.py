@@ -52,13 +52,23 @@ class ClientConfig:
 
 @dataclasses.dataclass(frozen=True)
 class Ros2Config:
-    """ROS 2 topics and robot IO settings for NZ100."""
+    """Camera topic and robot IO settings for NZ100."""
 
-    top_camera_topic: str = "/top/image_raw"
+    top_camera_topic: str = "/camera/color/image_raw"
     wrist_left_camera_topic: str = "/wrist_left/image_raw"
     joint_state_topic: str = "/joint_states"
     left_trajectory_topic: str = "/arm_left_controller/joint_trajectory"
     right_trajectory_topic: str = "/arm_right_controller/joint_trajectory"
+
+    ysrobot_sdk_path: str = "/home/pc/VLA/python_sdk"
+    ysrobot_host: str = "172.22.1.233"
+    ysrobot_port: int = 5010
+    ysrobot_timeout_ms: int = 5000
+    ysrobot_login_level: str = "L4"
+    ysrobot_login_pin: str = "admin"
+    ysrobot_move_vel: int = 30
+    ysrobot_move_acc: int = 50
+    ysrobot_planner: str = "pilz"
 
     left_joint_names: tuple[str, ...] = (
         "left_joint1",
@@ -88,13 +98,14 @@ class Ros2Config:
     right_home_positions: tuple[float, ...] = (-0.36, 0.36, -0.01, 1.92, 1.57, 0.0, 0.78)
     home_time_from_start: float = 4.0
 
-    # Dual-gripper Modbus topics. This matches the data collection setup.
+    # Data collection stores PLC gripper semantics as 1=open, 2=closed.
+    # Gripper IO uses YSRobot SDK Modbus registers.
     gripper_state_topic: str = "/robot/api/io/state"
     gripper_cmd_topic: str = "/robot/api/io/cmd"
     left_gripper_key: str = "an_out_d9746"
     right_gripper_key: str = "an_out_d9747"
-
-    # Data collection stores PLC gripper semantics as 1=open, 2=closed.
+    left_gripper_modbus_address: int = 9661
+    right_gripper_modbus_address: int = 9662
     modbus_open_value: int = 1
     modbus_closed_value: int = 2
     gripper_default_value: float = 1.0
@@ -179,6 +190,15 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
         "joint_state_topic",
         "left_trajectory_topic",
         "right_trajectory_topic",
+        "ysrobot_sdk_path",
+        "ysrobot_host",
+        "ysrobot_port",
+        "ysrobot_timeout_ms",
+        "ysrobot_login_level",
+        "ysrobot_login_pin",
+        "ysrobot_move_vel",
+        "ysrobot_move_acc",
+        "ysrobot_planner",
         "left_joint_names",
         "right_joint_names",
         "home_on_start",
@@ -189,6 +209,8 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
         "gripper_cmd_topic",
         "left_gripper_key",
         "right_gripper_key",
+        "left_gripper_modbus_address",
+        "right_gripper_modbus_address",
         "modbus_open_value",
         "modbus_closed_value",
         "gripper_default_value",

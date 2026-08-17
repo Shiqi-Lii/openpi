@@ -1,10 +1,10 @@
-# policy_host: 172.22.1.127
-policy_host: 192.168.168.150
-policy_port: 8000
+policy_host: 192.168.2.125
+# policy_host: 192.168.168.150
+policy_port: 8001
 control_fps: 50
-open_loop_horizon: 50
+open_loop_horizon: 25
 max_steps: 0
-point_time_from_start: 0.08
+point_time_from_start: 0.1
 
 # ===启动回位=======================================================
 # true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
@@ -33,8 +33,8 @@ action_refill_threshold: 6
 # RTC 参数只在 execution_mode 为 rtc_guidance 时生效。
 rtc_execute_horizon: 35
 rtc_prefix_len: 5
-rtc_guidance_weight: 10.0
-rtc_decay_tau: 6.0
+rtc_guidance_weight: 5.0
+rtc_decay_tau: 3.0
 rtc_decay_end: 15
 rtc_use_vjp: false
 rtc_delay_buffer_size: 4
@@ -50,9 +50,21 @@ legato_delay_buffer_size: 4
 legato_max_delay_steps: 4
 # ================================================================
 
-top_camera_topic: /top/image_raw
+top_camera_topic: /camera/color/image_raw
 # 单 top 相机模型不再订阅 wrist 相机。
 # wrist_left_camera_topic: /wrist_left/image_raw
+
+# YSRobot SDK connection. Joint state, joint commands, and gripper commands use this SDK.
+ysrobot_sdk_path: /home/pc/VLA/python_sdk
+ysrobot_host: 192.168.2.123
+ysrobot_port: 5010
+ysrobot_timeout_ms: 5000
+ysrobot_login_level: L4
+ysrobot_login_pin: admin
+ysrobot_move_vel: 30
+ysrobot_move_acc: 50
+ysrobot_planner: pilz
+
 joint_state_topic: /joint_states
 
 left_joint_names:
@@ -75,11 +87,13 @@ right_joint_names:
 left_trajectory_topic: /arm_left_controller/joint_trajectory
 right_trajectory_topic: /arm_right_controller/joint_trajectory
 
-# Use the same dual-gripper Modbus keys as lerobot_data_collection.
+# Gripper IO uses YSRobot SDK Modbus registers.
 gripper_state_topic: /robot/api/io/state
 gripper_cmd_topic: /robot/api/io/cmd
 left_gripper_key: an_out_d9746
 right_gripper_key: an_out_d9747
+left_gripper_modbus_address: 9661
+right_gripper_modbus_address: 9662
 modbus_open_value: 1
 modbus_closed_value: 2
 gripper_default_value: 1.0

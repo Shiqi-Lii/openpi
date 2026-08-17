@@ -10,6 +10,7 @@ import numpy as np
 
 from robot_client.config import ClientConfig
 from robot_client.ros2_io import NZ100Ros2IO
+from robot_client.runtime_control import RuntimeControl
 from robot_client.runners.common import format_action
 from robot_client.runners.common import infer_sync_chunk
 from robot_client.runners.common import read_observation
@@ -19,7 +20,14 @@ from robot_client.state_builder import split_action
 from robot_client.sync_client import NZ100SyncClient
 
 
-def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
+def run(
+    config: ClientConfig,
+    *,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+    once: bool,
+    runtime_control: RuntimeControl | None = None,
+) -> None:
     if config.control_hz <= 0:
         raise ValueError(f"control_hz must be positive for async_queue, got {config.control_hz}")
 
@@ -33,6 +41,18 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
         min(int(config.action_refill_threshold), max(int(config.open_loop_horizon) - 1, 0)),
     )
     print(f"Entering async_queue control loop; refill_threshold={refill_threshold}.")
+
+    def refill_from_fresh_observation(reason: str) -> None:
+        nonlocal last_action
+        print(f"Requesting fresh async_queue action chunk ({reason}).")
+        action_queue.clear()
+        fresh_chunk = infer_sync_chunk(client, config, ros_io, mock=mock, log_prefix=f"[{reason}] ")
+        for action in fresh_chunk:
+            action_queue.append(np.asarray(action, dtype=np.float32))
+        if not action_queue:
+            raise RuntimeError("Policy returned empty action chunk.")
+        last_action = None
+        print(f"Async_queue fresh chunk ready ({reason}); queue_len={len(action_queue)}")
 
     first_chunk = infer_sync_chunk(client, config, ros_io, mock=mock)
     for action in first_chunk:
@@ -59,6 +79,30 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
     with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="async_queue") as executor:
         pending_future: concurrent.futures.Future[np.ndarray] | None = submit_prefetch(executor, list(action_queue))
         while True:
+            if runtime_control is not None and runtime_control.stop_event.is_set():
+                print("Async_queue stop requested; exiting control loop.")
+                return
+
+            if runtime_control is not None and runtime_control.pause_event.is_set():
+                print("Async_queue pause requested; discarding queued actions and old prefetch result.")
+                action_queue.clear()
+                pending_future = None
+                runtime_control.paused_event.set()
+                if runtime_control.on_pause is not None:
+                    runtime_control.on_pause()
+                print("Async_queue waiting for resume signal.")
+                while not runtime_control.resume_event.wait(timeout=0.05):
+                    if runtime_control.stop_event.is_set():
+                        print("Async_queue stop requested while paused; exiting.")
+                        return
+                runtime_control.resume_event.clear()
+                runtime_control.pause_event.clear()
+                runtime_control.paused_event.clear()
+                refill_from_fresh_observation("resume")
+                pending_future = submit_prefetch(executor, list(action_queue))
+                next_tick = time.monotonic()
+                continue
+
             if pending_future is not None and pending_future.done():
                 prefetched_chunk = pending_future.result()
                 for action in prefetched_chunk:
