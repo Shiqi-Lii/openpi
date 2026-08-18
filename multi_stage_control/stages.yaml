@@ -1,6 +1,6 @@
 robot_client_config: robot_client/configs/nz100_client.yaml
 
-yolo_url: "http://192.168.2.201:19227/api/v1/target/latest?require_stable=0"
+yolo_url: "http://127.0.0.1:19227/api/v1/target/latest?require_stable=0"
 yolo_timeout_s: 1.0          # YOLO请求超时
 poll_hz: 20.0                # 距离检测频率
 distance_threshold_m: 0.1    # 触发距离阈值
@@ -12,7 +12,7 @@ grasp_move_vel: 5.0          # move_l速度
 grasp_move_acc: 20.0         # move_l加速度
 grasp_move_planner: pilz     # move_l规划器
 handoff_hold_enabled: true   # move_l前是否hold
-handoff_hold_s: 0.1         # hold时间
+handoff_hold_s: 0.05         # hold时间
 gripper_register: 9661       # 左夹爪寄存器
 gripper_close_value: 2       # 夹爪关闭值
 gripper_settle_s: 1.0        # 夹爪等待时间

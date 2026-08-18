@@ -1,0 +1,84 @@
+service:
+  host: 0.0.0.0
+  port: 19227
+
+ros2:
+  color_topic: /camera/color/image_raw
+  depth_topic: /camera/depth/image_raw
+  camera_info_topic: /camera/color/camera_info
+  capture_hz: 15.0
+  sync_slop_s: 0.05
+
+yolo:
+  model_path: multi_stage_control/yolo_detection/best_model.pt
+  device: null
+  imgsz: 640
+  conf: 0.25
+  class_name: bottle
+
+camera:
+  width: 640
+  height: 480
+  frame_id: camera_color_optical_frame
+  fx: 365.3350830078125
+  fy: 365.2415771484375
+  cx: 317.5589599609375
+  cy: 241.07225036621094
+  depth_scale_m_per_unit: 0.001
+  depth_min_mm: 150.0
+  depth_max_mm: 3000.0
+
+bottle:
+  minimum_score: 0.25
+  mask_erode_px: 3
+  nominal_diameter_mm: 50.0
+  fit_band_lo_fraction: 0.4
+  fit_band_hi_fraction: 0.6
+  target_height_fraction: 0.5
+  minimum_band_points: 30
+  maximum_fit_rms_mm: 6.0
+  minimum_visible_height_mm: 130.0
+  maximum_visible_height_mm: 280.0
+
+table_plane:
+  seed_normal_camera: [-0.009151609059413887, -0.389403986946177, -0.9210215974677497]
+  seed_d_m: 0.754180153636929
+  cache_path: /tmp/bottle_m72/table_plane_cache.json
+  validate_inlier_threshold_mm: 7.0
+  validate_minimum_inlier_ratio: 0.45
+  validate_sample_count: 3000
+  refit_sample_count: 8000
+  ransac_iterations: 100
+  ransac_threshold_mm: 6.0
+  refit_minimum_inlier_ratio: 0.45
+  roi_expand_x_px: 120
+  roi_expand_y_up_px: 110
+  roi_expand_y_down_px: 110
+  exclude_mask_dilate_px: 10
+
+hand_eye:
+  source_frame: camera_color_optical_frame
+  target_frame: robot_default_base
+  T_base_camera_m:
+    - [-0.01237865877, -0.9183482809, 0.3955795795, 0.1811953609]
+    - [-0.9999230128, 0.01102908878, -0.005685736014, 0.02991534703]
+    - [0.0008586035813, -0.3956195067, -0.9184141052, 0.1994286425]
+    - [0.0, 0.0, 0.0, 1.0]
+
+tool:
+  flange_to_grasp_local_mm: [-34.09055872, 13.41168353, 148.79882674]
+
+robot:
+  host: 192.168.2.123
+  port: 5010
+  timeout_ms: 5000
+  login_level: L4
+  login_pin: admin
+  sdk_path: /home/pc/VLA/python_sdk
+
+continuous:
+  max_result_age_ms: 1500.0
+  require_stable_default: false
+  stability_window: 3
+  stable_max_step_mm: 4.0
+  stable_max_span_mm: 6.0
