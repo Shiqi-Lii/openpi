@@ -15,6 +15,7 @@ from robot_client.ros2_io import NZ100Ros2IO
 from robot_client.runners.common import format_action
 from robot_client.runners.common import format_state
 from robot_client.runners.common import read_observation
+from robot_client.runtime_control import RuntimeControl
 from robot_client.state_builder import discretize_plc_grippers
 from robot_client.state_builder import split_action
 
@@ -36,7 +37,14 @@ class LegatoSharedState:
     error: BaseException | None = None
 
 
-def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: bool) -> None:
+def run(
+    config: ClientConfig,
+    *,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+    once: bool,
+    runtime_control: RuntimeControl | None = None,
+) -> None:
     client = NZ100LegatoClient(config)
     executed_steps = 0
     print(f"Entering {config.execution_mode} control loop.")
@@ -58,20 +66,7 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
             time.sleep(0.01)
         print("Initial inference signal received.")
 
-    print("Reading initial observation for Legato.")
-    top_image, robot_state = read_observation(ros_io, mock=mock)
-    print(f"Requesting initial Legato action chunk; state={format_state(robot_state)}")
-    inference_start_s = time.monotonic()
-    current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
-    inference_elapsed_s = time.monotonic() - inference_start_s
-    print(
-        "Received initial Legato chunk: "
-        f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
-    )
-    if config.open_loop_horizon > 0:
-        current_chunk = current_chunk[: config.open_loop_horizon]
-    if current_chunk.shape[0] == 0:
-        raise ValueError("Initial Legato action chunk is empty")
+    current_chunk = _request_initial_chunk(config, client, ros_io, mock)
 
     if config.start_signal_file is not None:
         from pathlib import Path
@@ -88,17 +83,48 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
         [_clamp_legato_delay_steps(int(config.legato_prefix_len), config)],
         maxlen=max(1, int(config.legato_delay_buffer_size)),
     )
-    inference_thread = threading.Thread(
-        target=_legato_inference_loop,
-        args=(config, client, ros_io, mock, shared, condition, delay_buffer),
-        daemon=True,
-    )
-    inference_thread.start()
+    inference_thread = _start_inference_thread(config, client, ros_io, mock, shared, condition, delay_buffer)
 
     period_s = 1.0 / config.control_hz
     next_tick = time.monotonic()
     try:
         while True:
+            if runtime_control is not None and runtime_control.stop_event.is_set():
+                print("Runtime stop requested; leaving Legato loop.")
+                return
+            if runtime_control is not None and runtime_control.pause_event.is_set():
+                print("Legato pause requested; stopping current continuation and entering middle policy slot.")
+                with condition:
+                    shared.stop = True
+                    condition.notify_all()
+                inference_thread.join(timeout=2.0)
+
+                runtime_control.paused_event.set()
+                if runtime_control.on_pause is not None:
+                    runtime_control.on_pause()
+                while not runtime_control.resume_event.is_set() and not runtime_control.stop_event.is_set():
+                    time.sleep(0.001)
+                runtime_control.pause_event.clear()
+                runtime_control.resume_event.clear()
+                runtime_control.paused_event.clear()
+                if runtime_control.stop_event.is_set():
+                    print("Runtime stop requested during Legato pause.")
+                    return
+
+                print("Legato resumed; requesting a fresh initial chunk.")
+                current_chunk = _request_initial_chunk(config, client, ros_io, mock)
+                with condition:
+                    shared = LegatoSharedState(ctx=LegatoActionContext(raw_chunk=current_chunk, step_index=0))
+                delay_buffer = collections.deque(
+                    [_clamp_legato_delay_steps(int(config.legato_prefix_len), config)],
+                    maxlen=max(1, int(config.legato_delay_buffer_size)),
+                )
+                inference_thread = _start_inference_thread(
+                    config, client, ros_io, mock, shared, condition, delay_buffer
+                )
+                next_tick = time.monotonic()
+                continue
+
             with condition:
                 if shared.error is not None:
                     raise RuntimeError("Legato background inference failed") from shared.error
@@ -143,6 +169,47 @@ def run(config: ClientConfig, *, ros_io: NZ100Ros2IO | None, mock: bool, once: b
             shared.stop = True
             condition.notify_all()
         inference_thread.join(timeout=2.0)
+
+
+def _request_initial_chunk(
+    config: ClientConfig,
+    client: NZ100LegatoClient,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+) -> np.ndarray:
+    print("Reading initial observation for Legato.")
+    top_image, robot_state = read_observation(ros_io, mock=mock)
+    print(f"Requesting initial Legato action chunk; state={format_state(robot_state)}")
+    inference_start_s = time.monotonic()
+    current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+    inference_elapsed_s = time.monotonic() - inference_start_s
+    print(
+        "Received initial Legato chunk: "
+        f"shape={tuple(current_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
+    )
+    if config.open_loop_horizon > 0:
+        current_chunk = current_chunk[: config.open_loop_horizon]
+    if current_chunk.shape[0] == 0:
+        raise ValueError("Initial Legato action chunk is empty")
+    return current_chunk
+
+
+def _start_inference_thread(
+    config: ClientConfig,
+    client: NZ100LegatoClient,
+    ros_io: NZ100Ros2IO | None,
+    mock: bool,
+    shared: LegatoSharedState,
+    condition: threading.Condition,
+    delay_buffer: collections.deque[int],
+) -> threading.Thread:
+    inference_thread = threading.Thread(
+        target=_legato_inference_loop,
+        args=(config, client, ros_io, mock, shared, condition, delay_buffer),
+        daemon=True,
+    )
+    inference_thread.start()
+    return inference_thread
 
 
 def _steps_from_elapsed(elapsed_s: float, control_hz: float) -> int:

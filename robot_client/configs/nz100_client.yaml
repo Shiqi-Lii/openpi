@@ -2,7 +2,7 @@ policy_host: 192.168.2.125
 # policy_host: 192.168.168.150
 policy_port: 8001
 control_fps: 50
-open_loop_horizon: 25
+open_loop_horizon: 50
 max_steps: 0
 point_time_from_start: 0.1
 

@@ -28,7 +28,9 @@ from robot_client.config import ClientConfig
 from robot_client.config import load_app_config
 from robot_client.ros2_io import NZ100Ros2IO
 from robot_client.runners import async_queue
+from robot_client.runners import legato
 from robot_client.runners import rtc_guidance
+from robot_client.runners import sync_chunk
 from robot_client.runtime_control import RuntimeControl
 
 
@@ -437,7 +439,7 @@ def _fmt_xyz(xyz: tuple[float, float, float]) -> str:
 
 
 def _build_client_config(client_base: ClientConfig) -> ClientConfig:
-    supported_modes = {"rtc_guidance", "async_queue"}
+    supported_modes = {"sync_chunk", "async_queue", "rtc_guidance", "legato"}
     if client_base.execution_mode not in supported_modes:
         raise ValueError(
             "multi_stage_control interruption framework currently supports "
@@ -495,8 +497,8 @@ def main() -> None:
 
         print("Starting continuous VLA with interruption monitor.")
         client_config = _build_client_config(app_config.client)
-        if client_config.execution_mode == "rtc_guidance":
-            rtc_guidance.run(
+        if client_config.execution_mode == "sync_chunk":
+            sync_chunk.run(
                 client_config,
                 ros_io=ros_io,
                 mock=args.mock,
@@ -505,6 +507,22 @@ def main() -> None:
             )
         elif client_config.execution_mode == "async_queue":
             async_queue.run(
+                client_config,
+                ros_io=ros_io,
+                mock=args.mock,
+                once=False,
+                runtime_control=runtime_control,
+            )
+        elif client_config.execution_mode == "rtc_guidance":
+            rtc_guidance.run(
+                client_config,
+                ros_io=ros_io,
+                mock=args.mock,
+                once=False,
+                runtime_control=runtime_control,
+            )
+        elif client_config.execution_mode == "legato":
+            legato.run(
                 client_config,
                 ros_io=ros_io,
                 mock=args.mock,

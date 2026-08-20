@@ -11,12 +11,12 @@ import dataclasses
 import numpy as np
 
 
-RAW_STATE_DIM = 30
+RAW_STATE_DIM = 16
 
 LEFT_JOINT_SLICE = slice(0, 7)
-RIGHT_JOINT_SLICE = slice(14, 21)
-LEFT_GRIPPER_INDEX = 28
-RIGHT_GRIPPER_INDEX = 29
+LEFT_GRIPPER_INDEX = 7
+RIGHT_JOINT_SLICE = slice(8, 15)
+RIGHT_GRIPPER_INDEX = 15
 
 ACTION_DIM = 16
 
@@ -50,7 +50,7 @@ class NZ100Action:
 
 
 def build_raw_state(state: NZ100RobotState) -> np.ndarray:
-    """Build the raw 30D state expected by the NZ100 server transform."""
+    """Build the raw 16D state expected by the NZ100 server transform."""
 
     left_joints = np.asarray(state.left_joints, dtype=np.float32)
     right_joints = np.asarray(state.right_joints, dtype=np.float32)
@@ -68,7 +68,7 @@ def build_raw_state(state: NZ100RobotState) -> np.ndarray:
 
 
 def build_raw_action(action: np.ndarray) -> np.ndarray:
-    """Build a raw 30D action from the ordered 16D NZ100 policy action."""
+    """Build a raw 16D action from the ordered 16D NZ100 policy action."""
 
     ordered_action = np.asarray(action, dtype=np.float32)
     if ordered_action.shape != (ACTION_DIM,):
@@ -83,7 +83,7 @@ def build_raw_action(action: np.ndarray) -> np.ndarray:
 
 
 def build_raw_action_chunk(actions: np.ndarray) -> np.ndarray:
-    """Build raw 30D actions from an ordered 16D action chunk."""
+    """Build raw 16D actions from an ordered 16D action chunk."""
 
     actions = np.asarray(actions, dtype=np.float32)
     if actions.ndim != 2 or actions.shape[-1] != ACTION_DIM:

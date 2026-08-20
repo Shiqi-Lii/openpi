@@ -10,26 +10,9 @@ from openpi import transforms
 from openpi.models import model as _model
 
 
-# Raw LeRobot layout, reordered to:
+# Raw LeRobot layout is already:
 # [left joints (7), left gripper, right joints (7), right gripper].
-NZ100_STATE_INDICES: tuple[int, ...] = (
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    28,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    29,
-)
+NZ100_STATE_INDICES: tuple[int, ...] = tuple(range(16))
 NZ100_ACTION_INDICES: tuple[int, ...] = NZ100_STATE_INDICES
 
 

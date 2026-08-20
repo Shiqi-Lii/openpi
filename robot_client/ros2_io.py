@@ -142,11 +142,12 @@ class NZ100Ros2IO:
     def get_robot_state(self) -> NZ100RobotState:
         if self._latest_joint_state is None:
             self._wait_for_first_observation(require_image=False, require_joint_state=True, require_gripper_state=False)
+        left_gripper, right_gripper = self._read_gripper_states()
         return NZ100RobotState(
             left_joints=self._extract_named_positions(self.config.left_joint_names),
             right_joints=self._extract_named_positions(self.config.right_joint_names),
-            left_gripper=float(self._latest_left_gripper),
-            right_gripper=float(self._latest_right_gripper),
+            left_gripper=left_gripper,
+            right_gripper=right_gripper,
         )
 
     def apply_action(self, action: NZ100Action) -> None:
@@ -303,6 +304,40 @@ class NZ100Ros2IO:
                 self._last_right_gripper_cmd = right_command
                 self._latest_right_gripper = float(right_command)
 
+    def _read_gripper_states(self) -> tuple[float, float]:
+        left_address = int(self.config.left_gripper_modbus_address)
+        right_address = int(self.config.right_gripper_modbus_address)
+        start = min(left_address, right_address)
+        count = max(left_address, right_address) - start + 1
+
+        try:
+            registers = self._robot.device.read_modbus(start, count)
+            values = {int(register.address): int(register.value) for register in registers}
+            if left_address not in values or right_address not in values:
+                raise RuntimeError(
+                    f"missing gripper registers: expected {left_address},{right_address}, got {sorted(values)}"
+                )
+            left = _modbus_to_policy_value(
+                values[left_address],
+                self.config.modbus_open_value,
+                self.config.modbus_closed_value,
+            )
+            right = _modbus_to_policy_value(
+                values[right_address],
+                self.config.modbus_open_value,
+                self.config.modbus_closed_value,
+            )
+            self._latest_left_gripper = left
+            self._latest_right_gripper = right
+            return left, right
+        except Exception as exc:
+            print(
+                "Warning: failed to read gripper Modbus state; "
+                f"using cached values left={self._latest_left_gripper:.1f}, "
+                f"right={self._latest_right_gripper:.1f}: {exc}"
+            )
+            return float(self._latest_left_gripper), float(self._latest_right_gripper)
+
     def _wait_for_first_observation(
         self,
         *,
@@ -314,7 +349,7 @@ class NZ100Ros2IO:
         while True:
             image_ok = self._latest_top_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
-            gripper_ok = True  # Gripper state uses the last commanded/default policy value.
+            gripper_ok = True  # Gripper state is read from SDK Modbus when building policy observations.
             if image_ok and joint_ok and gripper_ok:
                 print(
                     "First NZ100 observation received: "
