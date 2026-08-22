@@ -1,17 +1,19 @@
 policy_host: 192.168.2.125
 # policy_host: 192.168.168.150
 policy_port: 8001
-control_fps: 50
-open_loop_horizon: 50
+control_fps: 30
+open_loop_horizon: 30
 max_steps: 0
-point_time_from_start: 0.1
+point_time_from_start: 0.0333
 
 # ===启动回位=======================================================
 # true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
 # false: 不发送回位轨迹，直接启动策略推理。
 home_on_start: true
-left_home_positions: [0.36, 0.36, 0.00, 1.92, -0.30, 0.00, 0.60]
-right_home_positions: [-0.36, 0.36, 0.00, 1.92, 0.30, 0.00, 2.00]
+# left_home_positions: [0.36, 0.36, 0.00, 1.92, -0.30, 0.00, 0.60]
+# right_home_positions: [-0.36, 0.36, 0.00, 1.92, 0.30, 0.00, 2.00]
+left_home_positions: [0.77, 0.24, 0.31, 2.2, -1.17, 0.20, 1.50]
+right_home_positions: [-0.77, 0.24, -0.31, 2.2, 1.17, 0.20, 1.10]
 home_time_from_start: 2.0
 # ================================================================
 
@@ -25,7 +27,7 @@ language_instruction: Pick up the bottle and place it in the blue box.
 #   async_queue  异步动作队列预取
 #   rtc_guidance RTC soft guidance
 #   legato       Legato native continuation
-execution_mode: async_queue
+execution_mode: sync_chunk
 
 # async_queue 参数只在 execution_mode 为 async_queue 时生效。
 action_refill_threshold: 6
@@ -43,11 +45,11 @@ rtc_max_delay_steps: 12
 # Legato 参数只在 execution_mode 为 legato 时生效。
 # legato_prefix_len 对应论文里的 full-guidance delay d。
 # legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=4, ramp=0 时设为 4。
-legato_execute_horizon: 35
+legato_execute_horizon: 33
 legato_prefix_len: 4
-legato_ramp_end: 4
+legato_ramp_end: 17
 legato_delay_buffer_size: 4
-legato_max_delay_steps: 4
+legato_max_delay_steps: 10
 # ================================================================
 
 top_camera_topic: /camera/color/image_raw

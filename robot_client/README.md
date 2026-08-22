@@ -107,7 +107,7 @@ client 发给 OpenPI server 的 observation 结构是：
 
 ```bash
 source /home/f/ysrobot_ws2/common/install/setup.bash
-python -m robot_client.main --config robot_client/configs/nz100_client.yaml
+python3 -m robot_client.main --config robot_client/configs/nz100_client.yaml
 ```
 
 只跑一次 action chunk：
