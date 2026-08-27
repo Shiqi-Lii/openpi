@@ -20,6 +20,7 @@ import numpy as np
 from robot_client.config import Ros2Config
 from robot_client.state_builder import NZ100Action
 from robot_client.state_builder import NZ100RobotState
+from robot_client.trajectory_logger import TrajectoryLogger
 
 
 class NZ100Ros2IO:
@@ -36,6 +37,7 @@ class NZ100Ros2IO:
 
         self._latest_top_image = None
         self._latest_joint_state = None
+        self._latest_left_tcp_pose = None
         self._latest_left_gripper = float(config.gripper_default_value)
         self._latest_right_gripper = float(config.gripper_default_value)
         self._last_left_gripper_cmd: int | None = None
@@ -43,6 +45,7 @@ class NZ100Ros2IO:
 
         self._left_trajectory_pub = None
         self._right_trajectory_pub = None
+        self._trajectory_logger: TrajectoryLogger | None = None
 
     def connect(self) -> None:
         print("Connecting to NZ100 camera ROS2 topic and YSRobot SDK...")
@@ -50,6 +53,7 @@ class NZ100Ros2IO:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
             from rclpy.node import Node
+            from geometry_msgs.msg import PoseStamped
             from sensor_msgs.msg import Image, JointState
             from trajectory_msgs.msg import JointTrajectory
         except ImportError as exc:
@@ -94,6 +98,7 @@ class NZ100Ros2IO:
         self._node = _NZ100Node("openpi_nz100_robot_client")
         self._node.create_subscription(Image, self.config.top_camera_topic, self._on_top_image, 10)
         self._node.create_subscription(JointState, self.config.joint_state_topic, self._on_joint_state, 100)
+        self._node.create_subscription(PoseStamped, self.config.left_tcp_pose_topic, self._on_left_tcp_pose, 100)
 
         self._left_trajectory_pub = self._node.create_publisher(
             JointTrajectory, self.config.left_trajectory_topic, 10
@@ -111,19 +116,27 @@ class NZ100Ros2IO:
             "Waiting for first NZ100 observation: "
             f"top_camera={self.config.top_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
+            f"left_tcp_pose={self.config.left_tcp_pose_topic if self.config.require_left_tcp_pose else 'not required'}, "
             f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
         )
-        self._wait_for_first_observation(require_gripper_state=False)
+        self._wait_for_first_observation(
+            require_gripper_state=False,
+            require_left_tcp_pose=bool(self.config.require_left_tcp_pose),
+        )
         print(
             "NZ100 IO connected: "
             f"top_camera={self.config.top_camera_topic}, "
             f"joint_state={self.config.joint_state_topic}, "
+            f"left_tcp_pose={self.config.left_tcp_pose_topic}, "
             f"left_traj={self.config.left_trajectory_topic}, "
             f"right_traj={self.config.right_trajectory_topic}, "
             f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
         )
 
     def disconnect(self) -> None:
+        if self._trajectory_logger is not None:
+            self._trajectory_logger.close()
+            self._trajectory_logger = None
         if self._robot is not None:
             self._robot.disconnect()
         if self._executor is not None:
@@ -142,26 +155,42 @@ class NZ100Ros2IO:
     def get_robot_state(self) -> NZ100RobotState:
         if self._latest_joint_state is None:
             self._wait_for_first_observation(require_image=False, require_joint_state=True, require_gripper_state=False)
+        if self.config.require_left_tcp_pose and self._latest_left_tcp_pose is None:
+            self._wait_for_first_observation(
+                require_image=False,
+                require_joint_state=False,
+                require_gripper_state=False,
+                require_left_tcp_pose=True,
+            )
         left_gripper, right_gripper = self._read_gripper_states()
         return NZ100RobotState(
             left_joints=self._extract_named_positions(self.config.left_joint_names),
             right_joints=self._extract_named_positions(self.config.right_joint_names),
             left_gripper=left_gripper,
             right_gripper=right_gripper,
+            left_tcp_pose=self._extract_left_tcp_pose() if self._latest_left_tcp_pose is not None else None,
         )
 
     def apply_action(self, action: NZ100Action) -> None:
-        self._publish_joint_trajectory(
-            self._left_trajectory_pub,
-            list(self.config.left_joint_names),
-            np.asarray(action.left_joints, dtype=np.float64),
-        )
-        self._publish_joint_trajectory(
-            self._right_trajectory_pub,
-            list(self.config.right_joint_names),
-            np.asarray(action.right_joints, dtype=np.float64),
-        )
-        self._control_grippers(action.left_gripper, action.right_gripper)
+        if self._trajectory_logger is not None:
+            self._trajectory_logger.record_action(action)
+        active_arm = self._active_arm()
+        if active_arm in ("both", "left"):
+            self._publish_joint_trajectory(
+                self._left_trajectory_pub,
+                list(self.config.left_joint_names),
+                np.asarray(action.left_joints, dtype=np.float64),
+            )
+        if active_arm in ("both", "right"):
+            self._publish_joint_trajectory(
+                self._right_trajectory_pub,
+                list(self.config.right_joint_names),
+                np.asarray(action.right_joints, dtype=np.float64),
+            )
+        self._control_grippers_for_active_arm(action.left_gripper, action.right_gripper)
+
+    def set_trajectory_logger(self, logger: TrajectoryLogger | None) -> None:
+        self._trajectory_logger = logger
 
     def set_cached_gripper_state(self, *, left: float | None = None, right: float | None = None) -> None:
         """Update cached PLC gripper state after an out-of-band command.
@@ -217,21 +246,24 @@ class NZ100Ros2IO:
         if duration_s <= 0:
             raise ValueError("Home trajectory time must be positive")
 
-        print(f"Moving NZ100 to startup pose: both arms={duration_s:.2f}s, opening both grippers")
-        self._publish_joint_trajectory(
-            self._left_trajectory_pub,
-            list(self.config.left_joint_names),
-            left_positions,
-            duration_s=duration_s,
-        )
-        self._publish_joint_trajectory(
-            self._right_trajectory_pub,
-            list(self.config.right_joint_names),
-            right_positions,
-            duration_s=duration_s,
-        )
+        active_arm = self._active_arm()
+        print(f"Moving NZ100 to startup pose: active_arm={active_arm}, duration={duration_s:.2f}s, opening grippers")
+        if active_arm in ("both", "left"):
+            self._publish_joint_trajectory(
+                self._left_trajectory_pub,
+                list(self.config.left_joint_names),
+                left_positions,
+                duration_s=duration_s,
+            )
+        if active_arm in ("both", "right"):
+            self._publish_joint_trajectory(
+                self._right_trajectory_pub,
+                list(self.config.right_joint_names),
+                right_positions,
+                duration_s=duration_s,
+            )
         open_value = float(self.config.modbus_open_value)
-        self._control_grippers(open_value, open_value)
+        self._control_grippers_for_active_arm(open_value, open_value)
         time.sleep(duration_s)
         print("NZ100 startup pose command completed; starting policy inference.")
 
@@ -244,6 +276,26 @@ class NZ100Ros2IO:
 
     def _on_joint_state(self, msg) -> None:
         self._latest_joint_state = msg
+
+    def _on_left_tcp_pose(self, msg) -> None:
+        self._latest_left_tcp_pose = msg
+
+    def _extract_left_tcp_pose(self) -> np.ndarray:
+        msg = self._latest_left_tcp_pose
+        if msg is None:
+            raise RuntimeError(f"No left TCP pose received from {self.config.left_tcp_pose_topic}")
+        return np.asarray(
+            [
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z,
+                msg.pose.orientation.x,
+                msg.pose.orientation.y,
+                msg.pose.orientation.z,
+                msg.pose.orientation.w,
+            ],
+            dtype=np.float32,
+        )
 
     def _extract_named_positions(self, joint_names: tuple[str, ...]) -> np.ndarray:
         msg = self._latest_joint_state
@@ -304,6 +356,47 @@ class NZ100Ros2IO:
                 self._last_right_gripper_cmd = right_command
                 self._latest_right_gripper = float(right_command)
 
+    def _control_grippers_for_active_arm(self, left_value: float, right_value: float) -> None:
+        active_arm = self._active_arm()
+        if active_arm == "both":
+            self._control_grippers(left_value, right_value)
+        elif active_arm == "left":
+            self._control_left_gripper(left_value)
+        elif active_arm == "right":
+            self._control_right_gripper(right_value)
+        else:
+            raise ValueError(f"Unsupported active_arm: {self.config.active_arm!r}")
+
+    def _control_left_gripper(self, left_value: float) -> None:
+        left_command = _policy_value_to_modbus(left_value, self.config.modbus_open_value, self.config.modbus_closed_value)
+        if left_command != self._last_left_gripper_cmd:
+            left_result = self._robot.device.write_modbus(int(self.config.left_gripper_modbus_address), left_command)
+            if not left_result:
+                print(f"Warning: YSRobot left gripper Modbus command failed: {left_result.message}")
+            else:
+                self._last_left_gripper_cmd = left_command
+                self._latest_left_gripper = float(left_command)
+
+    def _control_right_gripper(self, right_value: float) -> None:
+        right_command = _policy_value_to_modbus(
+            right_value, self.config.modbus_open_value, self.config.modbus_closed_value
+        )
+        if right_command != self._last_right_gripper_cmd:
+            right_result = self._robot.device.write_modbus(int(self.config.right_gripper_modbus_address), right_command)
+            if not right_result:
+                print(f"Warning: YSRobot right gripper Modbus command failed: {right_result.message}")
+            else:
+                self._last_right_gripper_cmd = right_command
+                self._latest_right_gripper = float(right_command)
+
+    def _active_arm(self) -> str:
+        active_arm = str(self.config.active_arm).lower()
+        if active_arm == "dual":
+            active_arm = "both"
+        if active_arm not in ("both", "left", "right"):
+            raise ValueError(f"active_arm must be one of both/left/right, got {self.config.active_arm!r}")
+        return active_arm
+
     def _read_gripper_states(self) -> tuple[float, float]:
         left_address = int(self.config.left_gripper_modbus_address)
         right_address = int(self.config.right_gripper_modbus_address)
@@ -344,18 +437,21 @@ class NZ100Ros2IO:
         require_image: bool = True,
         require_joint_state: bool = True,
         require_gripper_state: bool = True,
+        require_left_tcp_pose: bool = False,
     ) -> None:
         last_status_time = 0.0
         while True:
             image_ok = self._latest_top_image is not None or not require_image
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             gripper_ok = True  # Gripper state is read from SDK Modbus when building policy observations.
-            if image_ok and joint_ok and gripper_ok:
+            left_tcp_ok = self._latest_left_tcp_pose is not None or not require_left_tcp_pose
+            if image_ok and joint_ok and gripper_ok and left_tcp_ok:
                 print(
                     "First NZ100 observation received: "
                     f"image={'ok' if image_ok else 'skipped'}, "
                     f"joint_state={'ok' if joint_ok else 'skipped'}, "
-                    f"gripper_state={'ok' if gripper_ok else 'skipped'}"
+                    f"gripper_state={'ok' if gripper_ok else 'skipped'}, "
+                    f"left_tcp_pose={'ok' if left_tcp_ok else 'skipped'}"
                 )
                 return
             now = time.time()
@@ -365,6 +461,8 @@ class NZ100Ros2IO:
                     missing.append(self.config.top_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
+                if require_left_tcp_pose and self._latest_left_tcp_pose is None:
+                    missing.append(self.config.left_tcp_pose_topic)
                 print(f"Waiting for ROS2 topics: {missing}")
                 last_status_time = now
             time.sleep(0.05)

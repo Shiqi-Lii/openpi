@@ -37,8 +37,13 @@ def run(
         print(f"Reading observation before request; executed_steps={executed_steps}")
         top_image, robot_state = read_observation(ros_io, mock=mock)
         print(f"Requesting action chunk from OpenPI server; state={format_state(robot_state)}")
+        inference_start_s = time.monotonic()
         action_chunk = client.infer(top_image=top_image, robot_state=robot_state)
-        print(f"Received action chunk: shape={tuple(action_chunk.shape)}")
+        inference_elapsed_s = time.monotonic() - inference_start_s
+        print(
+            "Received sync_chunk action chunk: "
+            f"shape={tuple(action_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
+        )
         if config.open_loop_horizon > 0:
             action_chunk = action_chunk[: config.open_loop_horizon]
         if not config.execute_full_chunk:
@@ -73,7 +78,7 @@ def _execute_interruptible_action_chunk(
     runtime_control: RuntimeControl | None,
 ) -> tuple[int, bool]:
     step_sleep = 1.0 / config.control_hz if config.control_hz > 0 else 0.0
-    for raw_action in action_chunk:
+    for chunk_step, raw_action in enumerate(action_chunk):
         if runtime_control is not None and runtime_control.stop_event.is_set():
             print("Runtime stop requested; leaving sync_chunk loop.")
             return executed_steps, True
@@ -82,7 +87,10 @@ def _execute_interruptible_action_chunk(
             return executed_steps, True
 
         action = discretize_plc_grippers(split_action(raw_action))
-        print(f"Executing action[{executed_steps}]: {format_action(action)}")
+        print(
+            f"Executing sync_chunk action[{executed_steps}] "
+            f"chunk_step={chunk_step}: {format_action(action)}"
+        )
         if mock:
             print(action)
         else:

@@ -15,6 +15,7 @@ from robot_client.runners import async_queue
 from robot_client.runners import legato
 from robot_client.runners import rtc_guidance
 from robot_client.runners import sync_chunk
+from robot_client.trajectory_logger import TrajectoryLogger
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,6 +75,7 @@ def main() -> None:
         open_loop_horizon=client_base.open_loop_horizon,
         max_steps=client_base.max_steps,
         action_refill_threshold=client_base.action_refill_threshold,
+        state_layout=client_base.state_layout,
         execution_mode=client_base.execution_mode if args.execution_mode is None else args.execution_mode,
         execute_full_chunk=client_base.execute_full_chunk,
         rtc_execute_horizon=client_base.rtc_execute_horizon,
@@ -92,6 +94,8 @@ def main() -> None:
         start_signal_file=args.start_signal_file,
         inference_signal_file=args.inference_signal_file,
         ready_signal_file=args.ready_signal_file,
+        record_trajectory=client_base.record_trajectory,
+        trajectory_log_dir=client_base.trajectory_log_dir,
     )
 
     print(
@@ -111,6 +115,8 @@ def main() -> None:
         if not args.mock:
             ros_io = NZ100Ros2IO(app_config.ros2)
             ros_io.connect()
+            if config.record_trajectory:
+                ros_io.set_trajectory_logger(TrajectoryLogger(config.trajectory_log_dir, config=config))
             if app_config.ros2.home_on_start and not args.skip_home:
                 ros_io.move_to_home()
             else:

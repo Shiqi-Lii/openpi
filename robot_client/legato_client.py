@@ -16,6 +16,7 @@ from robot_client.config import ClientConfig
 from robot_client.state_builder import NZ100RobotState
 from robot_client.state_builder import build_raw_action_chunk
 from robot_client.state_builder import build_raw_state
+from robot_client.state_builder import expand_left_action_chunk
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,7 +62,7 @@ class NZ100LegatoClient:
             "images": {
                 "cam_high": image,
             },
-            "state": build_raw_state(robot_state),
+            "state": build_raw_state(robot_state, layout=self._config.state_layout),
             "prompt": self._config.prompt if prompt is None else prompt,
         }
 
@@ -72,8 +73,10 @@ class NZ100LegatoClient:
         result = self._policy.infer(observation)
         actions = np.asarray(result["actions"], dtype=np.float32)
 
-        if actions.ndim != 2 or actions.shape[-1] != 16:
-            raise ValueError(f"Expected action chunk shape (horizon, 16), got {actions.shape}")
+        if actions.ndim != 2 or actions.shape[-1] not in (8, 16):
+            raise ValueError(f"Expected action chunk shape (horizon, 8|16), got {actions.shape}")
+        if actions.shape[-1] == 8:
+            actions = expand_left_action_chunk(actions, robot_state)
         return actions
 
     def reset(self) -> None:

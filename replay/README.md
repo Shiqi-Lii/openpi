@@ -18,7 +18,8 @@ python3 -m replay.replay_episode \
   --dataset /home/pc/VLA/lerobot_data_collection/data_lerobot \
   --episode 0 \
   --config robot_client/configs/nz100_client.yaml \
-  --execute
+  --execute \
+  --show-video
 ```
 
 常用参数：

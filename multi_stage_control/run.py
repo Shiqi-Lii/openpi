@@ -32,6 +32,7 @@ from robot_client.runners import legato
 from robot_client.runners import rtc_guidance
 from robot_client.runners import sync_chunk
 from robot_client.runtime_control import RuntimeControl
+from robot_client.trajectory_logger import TrajectoryLogger
 
 
 @dataclasses.dataclass(frozen=True)
@@ -466,6 +467,10 @@ def main() -> None:
         if not args.mock:
             ros_io = NZ100Ros2IO(app_config.ros2)
             ros_io.connect()
+            if app_config.client.record_trajectory:
+                ros_io.set_trajectory_logger(
+                    TrajectoryLogger(app_config.client.trajectory_log_dir, config=app_config.client)
+                )
             if app_config.ros2.home_on_start:
                 ros_io.move_to_home()
             else:

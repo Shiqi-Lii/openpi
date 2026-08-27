@@ -20,6 +20,9 @@ from robot_client.state_builder import split_action
 from robot_client.sync_client import NZ100SyncClient
 
 
+QueuedAction = tuple[int, int, np.ndarray]
+
+
 def run(
     config: ClientConfig,
     *,
@@ -33,9 +36,10 @@ def run(
 
     client = NZ100SyncClient(config)
     worker_client = NZ100SyncClient(config)
-    action_queue: collections.deque[np.ndarray] = collections.deque()
+    action_queue: collections.deque[QueuedAction] = collections.deque()
     last_action: np.ndarray | None = None
     executed_steps = 0
+    next_chunk_id = 0
     refill_threshold = max(
         0,
         min(int(config.action_refill_threshold), max(int(config.open_loop_horizon) - 1, 0)),
@@ -43,33 +47,41 @@ def run(
     print(f"Entering async_queue control loop; refill_threshold={refill_threshold}.")
 
     def refill_from_fresh_observation(reason: str) -> None:
-        nonlocal last_action
+        nonlocal last_action, next_chunk_id
         print(f"Requesting fresh async_queue action chunk ({reason}).")
         action_queue.clear()
         fresh_chunk = infer_sync_chunk(client, config, ros_io, mock=mock, log_prefix=f"[{reason}] ")
-        for action in fresh_chunk:
-            action_queue.append(np.asarray(action, dtype=np.float32))
+        chunk_id = next_chunk_id
+        next_chunk_id += 1
+        for chunk_step, action in enumerate(fresh_chunk):
+            action_queue.append((chunk_id, chunk_step, np.asarray(action, dtype=np.float32)))
         if not action_queue:
             raise RuntimeError("Policy returned empty action chunk.")
         last_action = None
-        print(f"Async_queue fresh chunk ready ({reason}); queue_len={len(action_queue)}")
+        print(
+            f"Async_queue fresh chunk ready ({reason}); "
+            f"chunk_id={chunk_id}, steps={len(fresh_chunk)}, queue_len={len(action_queue)}"
+        )
 
     first_chunk = infer_sync_chunk(client, config, ros_io, mock=mock)
-    for action in first_chunk:
-        action_queue.append(np.asarray(action, dtype=np.float32))
+    chunk_id = next_chunk_id
+    next_chunk_id += 1
+    for chunk_step, action in enumerate(first_chunk):
+        action_queue.append((chunk_id, chunk_step, np.asarray(action, dtype=np.float32)))
     if not action_queue:
         raise RuntimeError("Policy returned empty action chunk.")
 
     def submit_prefetch(
         executor: concurrent.futures.ThreadPoolExecutor,
-        queued_actions: list[np.ndarray],
+        queued_actions: list[QueuedAction],
     ) -> concurrent.futures.Future[np.ndarray]:
+        projected_actions = [action for _, _, action in queued_actions]
         return executor.submit(
             _infer_projected_sync_chunk,
             worker_client,
             config,
             ros_io,
-            queued_actions,
+            projected_actions,
             mock=mock,
             log_prefix="[async-prefetch] ",
         )
@@ -105,9 +117,14 @@ def run(
 
             if pending_future is not None and pending_future.done():
                 prefetched_chunk = pending_future.result()
-                for action in prefetched_chunk:
-                    action_queue.append(np.asarray(action, dtype=np.float32))
-                print(f"Collected async prefetch; queue_len={len(action_queue)}")
+                chunk_id = next_chunk_id
+                next_chunk_id += 1
+                for chunk_step, action in enumerate(prefetched_chunk):
+                    action_queue.append((chunk_id, chunk_step, np.asarray(action, dtype=np.float32)))
+                print(
+                    "Collected async prefetch; "
+                    f"chunk_id={chunk_id}, steps={len(prefetched_chunk)}, queue_len={len(action_queue)}"
+                )
                 pending_future = None
 
             if len(action_queue) <= refill_threshold and pending_future is None:
@@ -115,9 +132,11 @@ def run(
                 pending_future = submit_prefetch(executor, list(action_queue))
 
             if action_queue:
-                raw_action = action_queue.popleft()
+                source_chunk_id, source_chunk_step, raw_action = action_queue.popleft()
                 last_action = raw_action
             elif last_action is not None:
+                source_chunk_id = -1
+                source_chunk_step = -1
                 raw_action = last_action
                 print("Action queue empty; holding last action.")
             else:
@@ -126,6 +145,7 @@ def run(
             action = discretize_plc_grippers(split_action(raw_action))
             print(
                 f"Executing async_queue action[{executed_steps}] "
+                f"chunk_id={source_chunk_id}, chunk_step={source_chunk_step}, "
                 f"queue_len={len(action_queue)}: {format_action(action)}"
             )
             if mock:
@@ -163,11 +183,16 @@ def _infer_projected_sync_chunk(
         robot_state = _project_robot_state_to_queue_tail(robot_state, queued_actions[-1])
         print(f"{log_prefix}Projected state to queued tail before prefetch.")
 
+    tic = time.monotonic()
     action_chunk = client.infer(
         top_image=top_image,
         robot_state=robot_state,
     )
-    print(f"{log_prefix}Received action chunk: shape={tuple(action_chunk.shape)}")
+    inference_elapsed_s = time.monotonic() - tic
+    print(
+        f"{log_prefix}Received action chunk: "
+        f"shape={tuple(action_chunk.shape)}, latency={inference_elapsed_s:.3f}s"
+    )
     if config.open_loop_horizon > 0:
         action_chunk = action_chunk[: config.open_loop_horizon]
     return action_chunk

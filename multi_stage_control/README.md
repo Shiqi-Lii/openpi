@@ -20,6 +20,7 @@ multi_stage_control/run.py::_grasp_policy
 
 ```bash
 python3 multi_stage_control/run.py
+python3 -m multi_stage_control.run
 ```
 
 指定配置：

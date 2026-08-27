@@ -20,6 +20,7 @@ class ClientConfig:
     max_steps: int = 0
     execution_mode: str = "sync_chunk"
     action_refill_threshold: int = 6
+    state_layout: str = "dual"
 
     # For normal chunk execution, the client requests one action chunk, then
     # executes actions from that chunk locally before asking the server again.
@@ -49,12 +50,20 @@ class ClientConfig:
     inference_signal_file: str | None = None
     ready_signal_file: str | None = None
 
+    # Optional command trajectory logging. When enabled, each client run writes
+    # one timestamped directory under trajectory_log_dir.
+    record_trajectory: bool = False
+    trajectory_log_dir: str = "run_logs"
+
 
 @dataclasses.dataclass(frozen=True)
 class Ros2Config:
     """Camera topic and robot IO settings for NZ100."""
 
     top_camera_topic: str = "/camera/color/image_raw"
+    active_arm: str = "both"
+    require_left_tcp_pose: bool = False
+    left_tcp_pose_topic: str = "/planner/left_tcp_pose"
     wrist_left_camera_topic: str = "/wrist_left/image_raw"
     joint_state_topic: str = "/joint_states"
     left_trajectory_topic: str = "/arm_left_controller/joint_trajectory"
@@ -162,6 +171,7 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "open_loop_horizon": "open_loop_horizon",
         "max_steps": "max_steps",
         "action_refill_threshold": "action_refill_threshold",
+        "state_layout": "state_layout",
         "language_instruction": "prompt",
         "execution_mode": "execution_mode",
         "rtc_execute_horizon": "rtc_execute_horizon",
@@ -177,6 +187,8 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
         "legato_ramp_end": "legato_ramp_end",
         "legato_delay_buffer_size": "legato_delay_buffer_size",
         "legato_max_delay_steps": "legato_max_delay_steps",
+        "record_trajectory": "record_trajectory",
+        "trajectory_log_dir": "trajectory_log_dir",
     }
     result = {target: data[source] for source, target in mapping.items() if source in data}
     return result
@@ -186,6 +198,9 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
     keys = {
         "point_time_from_start",
         "top_camera_topic",
+        "active_arm",
+        "require_left_tcp_pose",
+        "left_tcp_pose_topic",
         "wrist_left_camera_topic",
         "joint_state_topic",
         "left_trajectory_topic",

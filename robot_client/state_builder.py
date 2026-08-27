@@ -12,9 +12,11 @@ import numpy as np
 
 
 RAW_STATE_DIM = 16
+LEFT_TCP_STATE_DIM = 15
 
 LEFT_JOINT_SLICE = slice(0, 7)
 LEFT_GRIPPER_INDEX = 7
+LEFT_TCP_SLICE = slice(8, 15)
 RIGHT_JOINT_SLICE = slice(8, 15)
 RIGHT_GRIPPER_INDEX = 15
 
@@ -33,6 +35,7 @@ class NZ100RobotState:
     right_joints: np.ndarray
     left_gripper: float
     right_gripper: float
+    left_tcp_pose: np.ndarray | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,8 +52,8 @@ class NZ100Action:
     right_gripper: float
 
 
-def build_raw_state(state: NZ100RobotState) -> np.ndarray:
-    """Build the raw 16D state expected by the NZ100 server transform."""
+def build_raw_state(state: NZ100RobotState, *, layout: str = "dual") -> np.ndarray:
+    """Build the raw state expected by the selected NZ100 server transform."""
 
     left_joints = np.asarray(state.left_joints, dtype=np.float32)
     right_joints = np.asarray(state.right_joints, dtype=np.float32)
@@ -58,6 +61,23 @@ def build_raw_state(state: NZ100RobotState) -> np.ndarray:
         raise ValueError(f"left_joints must have shape (7,), got {left_joints.shape}")
     if right_joints.shape != (7,):
         raise ValueError(f"right_joints must have shape (7,), got {right_joints.shape}")
+
+    layout = str(layout).lower()
+    if layout in ("left_tcp", "left_with_tcp"):
+        if state.left_tcp_pose is None:
+            raise ValueError("left_tcp_pose is required when state_layout='left_tcp'")
+        left_tcp_pose = np.asarray(state.left_tcp_pose, dtype=np.float32)
+        if left_tcp_pose.shape != (7,):
+            raise ValueError(f"left_tcp_pose must have shape (7,), got {left_tcp_pose.shape}")
+
+        raw_state = np.zeros((LEFT_TCP_STATE_DIM,), dtype=np.float32)
+        raw_state[LEFT_JOINT_SLICE] = left_joints
+        raw_state[LEFT_GRIPPER_INDEX] = np.float32(state.left_gripper)
+        raw_state[LEFT_TCP_SLICE] = left_tcp_pose
+        return raw_state
+
+    if layout not in ("dual", "both"):
+        raise ValueError(f"Unsupported state_layout: {layout!r}")
 
     raw_state = np.zeros((RAW_STATE_DIM,), dtype=np.float32)
     raw_state[LEFT_JOINT_SLICE] = left_joints
@@ -89,6 +109,25 @@ def build_raw_action_chunk(actions: np.ndarray) -> np.ndarray:
     if actions.ndim != 2 or actions.shape[-1] != ACTION_DIM:
         raise ValueError(f"NZ100 action chunk must have shape (horizon, {ACTION_DIM}), got {actions.shape}")
     return np.stack([build_raw_action(action) for action in actions], axis=0)
+
+
+def expand_left_action_chunk(actions: np.ndarray, robot_state: NZ100RobotState) -> np.ndarray:
+    """Expand an 8D left-arm action chunk to the 16D dual-arm client layout."""
+
+    actions = np.asarray(actions, dtype=np.float32)
+    if actions.ndim != 2 or actions.shape[-1] != 8:
+        raise ValueError(f"NZ100 left action chunk must have shape (horizon, 8), got {actions.shape}")
+
+    right_joints = np.asarray(robot_state.right_joints, dtype=np.float32)
+    if right_joints.shape != (7,):
+        raise ValueError(f"right_joints must have shape (7,), got {right_joints.shape}")
+
+    expanded = np.zeros((actions.shape[0], ACTION_DIM), dtype=np.float32)
+    expanded[:, 0:7] = actions[:, 0:7]
+    expanded[:, LEFT_GRIPPER_INDEX] = actions[:, 7]
+    expanded[:, RIGHT_JOINT_SLICE] = right_joints[None, :]
+    expanded[:, RIGHT_GRIPPER_INDEX] = np.float32(robot_state.right_gripper)
+    return expanded
 
 
 def split_action(action: np.ndarray) -> NZ100Action:
