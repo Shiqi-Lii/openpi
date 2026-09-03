@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import os
 import pathlib
@@ -11,6 +12,21 @@ import openpi.shared.download as download
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
 import openpi.transforms as transforms
+
+
+def _infer_single_checkpoint_asset_id(checkpoint_dir: pathlib.Path) -> str | None:
+    assets_dir = checkpoint_dir / "assets"
+    if not assets_dir.exists():
+        return None
+
+    candidates = [
+        path.name
+        for path in assets_dir.iterdir()
+        if path.is_dir() and (path / "norm_stats.json").exists()
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def create_trained_policy(
@@ -59,6 +75,10 @@ def create_trained_policy(
     if norm_stats is None:
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
         # that the policy is using the same normalization stats as the original training process.
+        if data_config.asset_id is None:
+            inferred_asset_id = _infer_single_checkpoint_asset_id(pathlib.Path(checkpoint_dir))
+            if inferred_asset_id is not None:
+                data_config = dataclasses.replace(data_config, asset_id=inferred_asset_id)
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)

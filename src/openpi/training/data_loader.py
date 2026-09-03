@@ -8,9 +8,12 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
+try:
+    import lerobot.datasets.lerobot_dataset as lerobot_dataset
+except ModuleNotFoundError:
+    import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 
 import openpi.models.model as _model
 import openpi.training.config as _config

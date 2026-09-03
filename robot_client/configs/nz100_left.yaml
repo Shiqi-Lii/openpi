@@ -1,7 +1,7 @@
 policy_host: 192.168.2.125
 # policy_host: 192.168.168.150
 policy_port: 8001
-control_fps: 50
+control_fps: 40
 open_loop_horizon: 30
 max_steps: 0
 point_time_from_start: 0.1
@@ -30,7 +30,7 @@ language_instruction: Pick up the bottle and place it in the blue box.
 # ===执行模式=======================================================
 # 可选: sync_chunk / async_queue / rtc_guidance / legato
 execution_mode: async_queue
-action_refill_threshold: 4
+action_refill_threshold: 2
 
 rtc_execute_horizon: 35
 rtc_prefix_len: 5
