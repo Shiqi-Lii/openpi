@@ -38,7 +38,7 @@ uv run scripts/serve_policy.py policy:checkpoint \
 ```
 服务器使用conda环境示例：
 ```bash
-CUDA_VISIBLE_DEVICES=2 python scripts/serve_policy.py policy:checkpoint   --policy.config=pi05_nz100   --policy.dir=/mnt/16T/lisq5005_dir/openpi_checkpoints/pi05_nz100/nz100_v2_open_close_package/29999   --policy.asset-id=data_open_close_package
+CUDA_VISIBLE_DEVICES=2 python scripts/serve_policy.py policy:checkpoint --port 8001  --policy.config=pi05_nz100   --policy.dir=/mnt/16T/lisq5005_dir/openpi_checkpoints/pi05_nz100/nz100_v2_open_close_package/29999   --policy.asset-id=data_open_close_package
 INFO:root:Loading model...
 ```
 

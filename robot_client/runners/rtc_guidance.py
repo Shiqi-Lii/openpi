@@ -53,10 +53,14 @@ def run(
 
     def create_rtc_state(reason: str) -> tuple[threading.Condition, RTCSharedState, threading.Thread]:
         print(f"Reading observation for RTC ({reason}).")
-        top_image, robot_state = read_observation(ros_io, mock=mock)
+        top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
         print(f"Requesting RTC action chunk ({reason}); state={format_state(robot_state)}")
         inference_start_s = time.monotonic()
-        current_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+        current_chunk = client.infer(
+            top_image=top_image,
+            wrist_left_image=wrist_left_image,
+            robot_state=robot_state,
+        )
         inference_elapsed_s = time.monotonic() - inference_start_s
         print(
             f"Received RTC chunk ({reason}): "
@@ -208,7 +212,7 @@ def _rtc_inference_loop(
             predicted_delay_steps = _clamp_rtc_delay_steps(max(max(delay_buffer), int(config.rtc_prefix_len)), config)
 
         try:
-            top_image, robot_state = read_observation(ros_io, mock=mock)
+            top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
             prefix_len = min(predicted_delay_steps, previous_chunk.shape[0])
             previous_for_rtc = previous_chunk if prefix_len > 0 else None
             print(
@@ -220,6 +224,7 @@ def _rtc_inference_loop(
             tic = time.monotonic()
             new_chunk = client.infer(
                 top_image=top_image,
+                wrist_left_image=wrist_left_image,
                 robot_state=robot_state,
                 previous_chunk=previous_for_rtc,
                 prefix_len=prefix_len,

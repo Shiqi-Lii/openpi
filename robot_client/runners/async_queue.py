@@ -178,7 +178,7 @@ def _infer_projected_sync_chunk(
     mock: bool,
     log_prefix: str = "",
 ) -> np.ndarray:
-    top_image, robot_state = read_observation(ros_io, mock=mock)
+    top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
     if queued_actions:
         robot_state = _project_robot_state_to_queue_tail(robot_state, queued_actions[-1])
         print(f"{log_prefix}Projected state to queued tail before prefetch.")
@@ -186,6 +186,7 @@ def _infer_projected_sync_chunk(
     tic = time.monotonic()
     action_chunk = client.infer(
         top_image=top_image,
+        wrist_left_image=wrist_left_image,
         robot_state=robot_state,
     )
     inference_elapsed_s = time.monotonic() - tic

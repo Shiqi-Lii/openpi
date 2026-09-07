@@ -1,8 +1,8 @@
 policy_host: 192.168.2.125
 # policy_host: 192.168.168.150
 policy_port: 8001
-control_fps: 50
-open_loop_horizon: 30
+control_fps: 40
+open_loop_horizon: 40
 max_steps: 0
 point_time_from_start: 0.1
 
@@ -17,15 +17,20 @@ trajectory_log_dir: run_logs
 # true: ROS2 连接后先让双臂回到以下位置并打开夹爪，完成后再启动策略推理。
 # false: 不发送回位轨迹，直接启动策略推理。
 home_on_start: true
+home_time_from_start: 2.0
 # left_home_positions: [0.36, 0.36, 0.00, 1.92, -0.30, 0.00, 0.60]
 # right_home_positions: [-0.36, 0.36, 0.00, 1.92, 0.30, 0.00, 2.00]
-left_home_positions: [0.69, 0.21, 0.29, 2.11, -1.19, 0.23, 1.48]
-right_home_positions: [-0.69, 0.21, -0.29, 2.11, 1.19, 0.23, 1.10]
-home_time_from_start: 2.0
+#抓白色瓶子放在蓝色盒子里
+# left_home_positions: [0.69, 0.21, 0.29, 2.11, -1.19, 0.23, 1.48]
+# right_home_positions: [-0.69, 0.21, -0.29, 2.11, 1.19, 0.23, 1.10]
+# 打卡关闭蓝色纸筒
+left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
+right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
 # ================================================================
 
 # ===指令===========================================================
-language_instruction: Pick up the bottle and place it in the blue box.
+# language_instruction: Pick up the bottle and place it in the blue box.
+language_instruction: Open the blue cylindrical package, and then close the blue cylindrical package.
 # ================================================================
 
 # ===执行模式=======================================================
@@ -34,10 +39,10 @@ language_instruction: Pick up the bottle and place it in the blue box.
 #   async_queue  异步动作队列预取
 #   rtc_guidance RTC soft guidance
 #   legato       Legato native continuation
-execution_mode: async_queue
+execution_mode: legato
 
 # async_queue 参数只在 execution_mode 为 async_queue 时生效。
-action_refill_threshold: 4
+action_refill_threshold: 6
 
 # RTC 参数只在 execution_mode 为 rtc_guidance 时生效。
 rtc_execute_horizon: 35
@@ -52,16 +57,17 @@ rtc_max_delay_steps: 12
 # Legato 参数只在 execution_mode 为 legato 时生效。
 # legato_prefix_len 对应论文里的 full-guidance delay d。
 # legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=4, ramp=0 时设为 4。
-legato_execute_horizon: 20
-legato_prefix_len: 4
+legato_execute_horizon: 35 
+legato_prefix_len: 5
 legato_ramp_end: 15
 legato_delay_buffer_size: 4
 legato_max_delay_steps: 10
 # ================================================================
 
-top_camera_topic: /camera/color/image_raw
-# 单 top 相机模型不再订阅 wrist 相机。
-# wrist_left_camera_topic: /wrist_left/image_raw
+# 摄像头数量只能为 1 或 2：1=top，2=top+left wrist。
+camera_count: 2
+top_camera_topic: /top/image_raw
+wrist_left_camera_topic: /wrist_left/image_raw
 
 # YSRobot SDK connection. Joint state, joint commands, and gripper commands use this SDK.
 ysrobot_sdk_path: /home/pc/VLA/python_sdk

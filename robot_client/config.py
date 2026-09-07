@@ -60,6 +60,7 @@ class ClientConfig:
 class Ros2Config:
     """Camera topic and robot IO settings for NZ100."""
 
+    camera_count: int = 1
     top_camera_topic: str = "/camera/color/image_raw"
     active_arm: str = "both"
     require_left_tcp_pose: bool = False
@@ -118,6 +119,10 @@ class Ros2Config:
     modbus_open_value: int = 1
     modbus_closed_value: int = 2
     gripper_default_value: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.camera_count not in (1, 2):
+            raise ValueError(f"camera_count must be 1 or 2, got {self.camera_count}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -197,6 +202,7 @@ def _flat_client_data(data: dict[str, Any]) -> dict[str, Any]:
 def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
     keys = {
         "point_time_from_start",
+        "camera_count",
         "top_camera_topic",
         "active_arm",
         "require_left_tcp_pose",

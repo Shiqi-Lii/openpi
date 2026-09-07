@@ -48,7 +48,10 @@ legato_delay_buffer_size: 4
 legato_max_delay_steps: 10
 # ================================================================
 
+# 摄像头数量只能为 1 或 2：1=top，2=top+left wrist。
+camera_count: 1
 top_camera_topic: /camera/color/image_raw
+wrist_left_camera_topic: /wrist_left/image_raw
 
 ysrobot_sdk_path: /home/pc/VLA/python_sdk
 ysrobot_host: 192.168.2.123

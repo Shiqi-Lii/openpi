@@ -35,10 +35,14 @@ def run(
             continue
 
         print(f"Reading observation before request; executed_steps={executed_steps}")
-        top_image, robot_state = read_observation(ros_io, mock=mock)
+        top_image, wrist_left_image, robot_state = read_observation(ros_io, mock=mock)
         print(f"Requesting action chunk from OpenPI server; state={format_state(robot_state)}")
         inference_start_s = time.monotonic()
-        action_chunk = client.infer(top_image=top_image, robot_state=robot_state)
+        action_chunk = client.infer(
+            top_image=top_image,
+            wrist_left_image=wrist_left_image,
+            robot_state=robot_state,
+        )
         inference_elapsed_s = time.monotonic() - inference_start_s
         print(
             "Received sync_chunk action chunk: "
