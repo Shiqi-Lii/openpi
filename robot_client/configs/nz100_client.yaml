@@ -18,14 +18,14 @@ trajectory_log_dir: run_logs
 # false: 不发送回位轨迹，直接启动策略推理。
 home_on_start: true
 home_time_from_start: 2.0
-# left_home_positions: [0.36, 0.36, 0.00, 1.92, -0.30, 0.00, 0.60]
-# right_home_positions: [-0.36, 0.36, 0.00, 1.92, 0.30, 0.00, 2.00]
+# left_home_positions: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+# right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 #抓白色瓶子放在蓝色盒子里
-# left_home_positions: [0.69, 0.21, 0.29, 2.11, -1.19, 0.23, 1.48]
-# right_home_positions: [-0.69, 0.21, -0.29, 2.11, 1.19, 0.23, 1.10]
+# left_home_positions: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+# right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 # 打卡关闭蓝色纸筒
-left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
-right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+left_home_positions: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 # ================================================================
 
 # ===指令===========================================================
@@ -64,10 +64,11 @@ legato_delay_buffer_size: 4
 legato_max_delay_steps: 10
 # ================================================================
 
-# 摄像头数量只能为 1 或 2：1=top，2=top+left wrist。
-camera_count: 2
-top_camera_topic: /top/image_raw
-wrist_left_camera_topic: /wrist_left/image_raw
+# 摄像头数量：1=top，2=top+left wrist，3=top+left wrist+right wrist。
+camera_count: 3
+top_camera_topic: /camera_top/color/image_raw
+wrist_left_camera_topic: /camera_wrist_left/color/image_raw
+wrist_right_camera_topic: /camera_wrist_right/color/image_raw
 
 # YSRobot SDK connection. Joint state, joint commands, and gripper commands use this SDK.
 ysrobot_sdk_path: /home/pc/VLA/python_sdk

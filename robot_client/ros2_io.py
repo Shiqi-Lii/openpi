@@ -37,6 +37,7 @@ class NZ100Ros2IO:
 
         self._latest_top_image = None
         self._latest_wrist_left_image = None
+        self._latest_wrist_right_image = None
         self._latest_joint_state = None
         self._latest_left_tcp_pose = None
         self._latest_left_gripper = float(config.gripper_default_value)
@@ -98,11 +99,18 @@ class NZ100Ros2IO:
 
         self._node = _NZ100Node("openpi_nz100_robot_client")
         self._node.create_subscription(Image, self.config.top_camera_topic, self._on_top_image, 10)
-        if self.config.camera_count == 2:
+        if self.config.camera_count >= 2:
             self._node.create_subscription(
                 Image,
                 self.config.wrist_left_camera_topic,
                 self._on_wrist_left_image,
+                10,
+            )
+        if self.config.camera_count >= 3:
+            self._node.create_subscription(
+                Image,
+                self.config.wrist_right_camera_topic,
+                self._on_wrist_right_image,
                 10,
             )
         self._node.create_subscription(JointState, self.config.joint_state_topic, self._on_joint_state, 100)
@@ -124,7 +132,8 @@ class NZ100Ros2IO:
             "Waiting for first NZ100 observation: "
             f"camera_count={self.config.camera_count}, "
             f"top_camera={self.config.top_camera_topic}, "
-            f"wrist_left_camera={self.config.wrist_left_camera_topic if self.config.camera_count == 2 else 'disabled'}, "
+            f"wrist_left_camera={self.config.wrist_left_camera_topic if self.config.camera_count >= 2 else 'disabled'}, "
+            f"wrist_right_camera={self.config.wrist_right_camera_topic if self.config.camera_count >= 3 else 'disabled'}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_tcp_pose={self.config.left_tcp_pose_topic if self.config.require_left_tcp_pose else 'not required'}, "
             f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
@@ -137,7 +146,8 @@ class NZ100Ros2IO:
             "NZ100 IO connected: "
             f"camera_count={self.config.camera_count}, "
             f"top_camera={self.config.top_camera_topic}, "
-            f"wrist_left_camera={self.config.wrist_left_camera_topic if self.config.camera_count == 2 else 'disabled'}, "
+            f"wrist_left_camera={self.config.wrist_left_camera_topic if self.config.camera_count >= 2 else 'disabled'}, "
+            f"wrist_right_camera={self.config.wrist_right_camera_topic if self.config.camera_count >= 3 else 'disabled'}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_tcp_pose={self.config.left_tcp_pose_topic}, "
             f"left_traj={self.config.left_trajectory_topic}, "
@@ -170,6 +180,13 @@ class NZ100Ros2IO:
         if self._latest_wrist_left_image is None:
             self._wait_for_first_observation(require_image=True, require_joint_state=False)
         return _image_msg_to_rgb(self._latest_wrist_left_image)
+
+    def get_wrist_right_image(self) -> np.ndarray | None:
+        if self.config.camera_count < 3:
+            return None
+        if self._latest_wrist_right_image is None:
+            self._wait_for_first_observation(require_image=True, require_joint_state=False)
+        return _image_msg_to_rgb(self._latest_wrist_right_image)
 
     def get_robot_state(self) -> NZ100RobotState:
         if self._latest_joint_state is None:
@@ -295,6 +312,9 @@ class NZ100Ros2IO:
 
     def _on_wrist_left_image(self, msg) -> None:
         self._latest_wrist_left_image = msg
+
+    def _on_wrist_right_image(self, msg) -> None:
+        self._latest_wrist_right_image = msg
 
     def _on_joint_state(self, msg) -> None:
         self._latest_joint_state = msg
@@ -469,7 +489,12 @@ class NZ100Ros2IO:
                 or self._latest_wrist_left_image is not None
                 or not require_image
             )
-            image_ok = top_image_ok and wrist_left_image_ok
+            wrist_right_image_ok = (
+                self.config.camera_count < 3
+                or self._latest_wrist_right_image is not None
+                or not require_image
+            )
+            image_ok = top_image_ok and wrist_left_image_ok and wrist_right_image_ok
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             gripper_ok = True  # Gripper state is read from SDK Modbus when building policy observations.
             left_tcp_ok = self._latest_left_tcp_pose is not None or not require_left_tcp_pose
@@ -489,10 +514,16 @@ class NZ100Ros2IO:
                     missing.append(self.config.top_camera_topic)
                 if (
                     require_image
-                    and self.config.camera_count == 2
+                    and self.config.camera_count >= 2
                     and self._latest_wrist_left_image is None
                 ):
                     missing.append(self.config.wrist_left_camera_topic)
+                if (
+                    require_image
+                    and self.config.camera_count >= 3
+                    and self._latest_wrist_right_image is None
+                ):
+                    missing.append(self.config.wrist_right_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
                 if require_left_tcp_pose and self._latest_left_tcp_pose is None:

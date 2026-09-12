@@ -18,8 +18,8 @@ trajectory_log_dir: run_logs
 # ===启动回位=======================================================
 # 左手模式下只下发左臂回位和左夹爪打开命令。
 home_on_start: true
-left_home_positions: [0.69, 0.21, 0.29, 2.11, -1.19, 0.23, 1.48]
-right_home_positions: [-0.69, 0.21, -0.29, 2.11, 1.19, 0.23, 1.10]
+left_home_positions: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 home_time_from_start: 2.0
 # ================================================================
 
@@ -48,10 +48,11 @@ legato_delay_buffer_size: 4
 legato_max_delay_steps: 10
 # ================================================================
 
-# 摄像头数量只能为 1 或 2：1=top，2=top+left wrist。
+# 摄像头数量：1=top，2=top+left wrist，3=top+left wrist+right wrist。
 camera_count: 1
-top_camera_topic: /camera/color/image_raw
-wrist_left_camera_topic: /wrist_left/image_raw
+top_camera_topic: /camera_top/color/image_raw
+wrist_left_camera_topic: /camera_wrist_left/color/image_raw
+wrist_right_camera_topic: /camera_wrist_right/color/image_raw
 
 ysrobot_sdk_path: /home/pc/VLA/python_sdk
 ysrobot_host: 192.168.2.123

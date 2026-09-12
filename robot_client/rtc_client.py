@@ -51,6 +51,7 @@ class NZ100RTCClient:
         *,
         top_image: np.ndarray,
         wrist_left_image: np.ndarray | None = None,
+        wrist_right_image: np.ndarray | None = None,
         robot_state: NZ100RobotState,
         previous_chunk: np.ndarray | None = None,
         prefix_len: int | None = None,
@@ -67,6 +68,11 @@ class NZ100RTCClient:
                 wrist_left_image, self._config.image_size, self._config.image_size
             )
             images["cam_left_wrist"] = image_tools.convert_to_uint8(wrist_image)
+        if wrist_right_image is not None:
+            wrist_image = image_tools.resize_with_pad(
+                wrist_right_image, self._config.image_size, self._config.image_size
+            )
+            images["cam_right_wrist"] = image_tools.convert_to_uint8(wrist_image)
 
         observation = {
             "images": images,

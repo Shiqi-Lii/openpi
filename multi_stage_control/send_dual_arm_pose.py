@@ -10,8 +10,8 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 #HOME
-LEFT = [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
-RIGHT = [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+LEFT = [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+RIGHT = [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 
 #P1
 # LEFT = [-0.06, 0.29, -0.21, 1.39, 1.76, -0.60, -1.66]

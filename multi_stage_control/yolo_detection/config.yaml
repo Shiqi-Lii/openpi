@@ -3,7 +3,7 @@ service:
   port: 19227
 
 ros2:
-  color_topic: /camera/color/image_raw
+  color_topic: /camera_top/color/image_raw
   depth_topic: /camera/depth/image_raw
   camera_info_topic: /camera/color/camera_info
   capture_hz: 15.0

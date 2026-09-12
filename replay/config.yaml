@@ -1,0 +1,38 @@
+# LeRobot 数据与 episode
+dataset: /home/pc/VLA/lerobot_data_collection/data_lerobot
+episode: 0
+action_key: action
+fps: 30                 # null：优先读取 meta/info.json
+start: 0
+end: null                 # null：回放到 episode 结束
+stride: 1
+max_steps: 0              # 0：不限制
+print_every: 10
+
+# 画面显示
+show_video: false
+video_keys: null          # null：自动显示数据集中的全部视角
+# video_keys: [observation.images.top, observation.images.wrist_left]
+
+# 机器人执行；false 时只显示和打印，不控制机器人
+execute: false
+home: true
+robot_host: 192.168.2.123
+robot_port: 5010
+timeout_s: 5.0
+login_level: L4
+login_pin: admin
+
+# 关节控制：与 robot_client 一样发布 JointTrajectory
+point_time_from_start: 0.1
+home_time_from_start: 2.0
+left_trajectory_topic: /arm_left_controller/joint_trajectory
+right_trajectory_topic: /arm_right_controller/joint_trajectory
+left_joint_names: [left_joint1, left_joint2, left_joint3, left_joint4, left_joint5, left_joint6, left_joint7]
+right_joint_names: [right_joint1, right_joint2, right_joint3, right_joint4, right_joint5, right_joint6, right_joint7]
+
+# 夹爪控制：YSRobot HTTP Modbus
+left_gripper_register: 9661
+right_gripper_register: 9662
+left_home: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+right_home: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]

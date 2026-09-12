@@ -66,7 +66,9 @@ robot_client/configs/nz100_client.yaml
 
 | 功能 | 默认话题 | 消息类型 |
 | --- | --- | --- |
-| 顶部相机 | `/top/image_raw` | `sensor_msgs/msg/Image` |
+| 顶部相机 | `/camera_top/color/image_raw` | `sensor_msgs/msg/Image` |
+| 左腕相机 | `/camera_wrist_left/color/image_raw` | `sensor_msgs/msg/Image` |
+| 右腕相机 | `/camera_wrist_right/color/image_raw` | `sensor_msgs/msg/Image` |
 | 关节状态 | `/joint_states` | `sensor_msgs/msg/JointState` |
 | 左臂控制 | `/arm_left_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` |
 | 右臂控制 | `/arm_right_controller/joint_trajectory` | `trajectory_msgs/msg/JointTrajectory` |
@@ -134,8 +136,8 @@ open_loop_horizon: 32
 max_steps: 0
 point_time_from_start: 0.01
 home_on_start: true
-left_home_positions: [0.36, 0.36, -0.01, 1.92, 1.57, 0.00, -1.40]
-right_home_positions: [-0.36, 0.36, -0.01, 1.92, 1.57, 0.00, 0.78]
+left_home_positions: [0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.00]
+right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 home_time_from_start: 4.0
 language_instruction: pick up the bottle and place it in the blue box
 execution_mode: sync_chunk

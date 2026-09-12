@@ -61,11 +61,12 @@ class Ros2Config:
     """Camera topic and robot IO settings for NZ100."""
 
     camera_count: int = 1
-    top_camera_topic: str = "/camera/color/image_raw"
+    top_camera_topic: str = "/camera_top/color/image_raw"
     active_arm: str = "both"
     require_left_tcp_pose: bool = False
     left_tcp_pose_topic: str = "/planner/left_tcp_pose"
-    wrist_left_camera_topic: str = "/wrist_left/image_raw"
+    wrist_left_camera_topic: str = "/camera_wrist_left/color/image_raw"
+    wrist_right_camera_topic: str = "/camera_wrist_right/color/image_raw"
     joint_state_topic: str = "/joint_states"
     left_trajectory_topic: str = "/arm_left_controller/joint_trajectory"
     right_trajectory_topic: str = "/arm_right_controller/joint_trajectory"
@@ -104,8 +105,8 @@ class Ros2Config:
     # Optional startup homing. When enabled, both arm trajectories are
     # published together and policy inference starts after both are complete.
     home_on_start: bool = True
-    left_home_positions: tuple[float, ...] = (0.36, 0.36, -0.01, 1.92, 1.57, 0.0, -1.40)
-    right_home_positions: tuple[float, ...] = (-0.36, 0.36, -0.01, 1.92, 1.57, 0.0, 0.78)
+    left_home_positions: tuple[float, ...] = (0.28, 0.17, 0.09, 1.83, 1.75, -0.09, 0.0)
+    right_home_positions: tuple[float, ...] = (-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.0)
     home_time_from_start: float = 4.0
 
     # Data collection stores PLC gripper semantics as 1=open, 2=closed.
@@ -121,8 +122,8 @@ class Ros2Config:
     gripper_default_value: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.camera_count not in (1, 2):
-            raise ValueError(f"camera_count must be 1 or 2, got {self.camera_count}")
+        if self.camera_count not in (1, 2, 3):
+            raise ValueError(f"camera_count must be 1, 2, or 3, got {self.camera_count}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -208,6 +209,7 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
         "require_left_tcp_pose",
         "left_tcp_pose_topic",
         "wrist_left_camera_topic",
+        "wrist_right_camera_topic",
         "joint_state_topic",
         "left_trajectory_topic",
         "right_trajectory_topic",
