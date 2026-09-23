@@ -40,6 +40,7 @@ class NZ100Ros2IO:
         self._latest_wrist_right_image = None
         self._latest_joint_state = None
         self._latest_left_tcp_pose = None
+        self._latest_right_tcp_pose = None
         self._latest_left_gripper = float(config.gripper_default_value)
         self._latest_right_gripper = float(config.gripper_default_value)
         self._last_left_gripper_cmd: int | None = None
@@ -115,6 +116,7 @@ class NZ100Ros2IO:
             )
         self._node.create_subscription(JointState, self.config.joint_state_topic, self._on_joint_state, 100)
         self._node.create_subscription(PoseStamped, self.config.left_tcp_pose_topic, self._on_left_tcp_pose, 100)
+        self._node.create_subscription(PoseStamped, self.config.right_tcp_pose_topic, self._on_right_tcp_pose, 100)
 
         self._left_trajectory_pub = self._node.create_publisher(
             JointTrajectory, self.config.left_trajectory_topic, 10
@@ -136,11 +138,13 @@ class NZ100Ros2IO:
             f"wrist_right_camera={self.config.wrist_right_camera_topic if self.config.camera_count >= 3 else 'disabled'}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_tcp_pose={self.config.left_tcp_pose_topic if self.config.require_left_tcp_pose else 'not required'}, "
+            f"right_tcp_pose={self.config.right_tcp_pose_topic if self.config.require_right_tcp_pose else 'not required'}, "
             f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
         )
         self._wait_for_first_observation(
             require_gripper_state=False,
             require_left_tcp_pose=bool(self.config.require_left_tcp_pose),
+            require_right_tcp_pose=bool(self.config.require_right_tcp_pose),
         )
         print(
             "NZ100 IO connected: "
@@ -150,6 +154,7 @@ class NZ100Ros2IO:
             f"wrist_right_camera={self.config.wrist_right_camera_topic if self.config.camera_count >= 3 else 'disabled'}, "
             f"joint_state={self.config.joint_state_topic}, "
             f"left_tcp_pose={self.config.left_tcp_pose_topic}, "
+            f"right_tcp_pose={self.config.right_tcp_pose_topic}, "
             f"left_traj={self.config.left_trajectory_topic}, "
             f"right_traj={self.config.right_trajectory_topic}, "
             f"ysrobot={self.config.ysrobot_host}:{self.config.ysrobot_port}"
@@ -198,6 +203,13 @@ class NZ100Ros2IO:
                 require_gripper_state=False,
                 require_left_tcp_pose=True,
             )
+        if self.config.require_right_tcp_pose and self._latest_right_tcp_pose is None:
+            self._wait_for_first_observation(
+                require_image=False,
+                require_joint_state=False,
+                require_gripper_state=False,
+                require_right_tcp_pose=True,
+            )
         left_gripper, right_gripper = self._read_gripper_states()
         return NZ100RobotState(
             left_joints=self._extract_named_positions(self.config.left_joint_names),
@@ -205,6 +217,7 @@ class NZ100Ros2IO:
             left_gripper=left_gripper,
             right_gripper=right_gripper,
             left_tcp_pose=self._extract_left_tcp_pose() if self._latest_left_tcp_pose is not None else None,
+            right_tcp_pose=self._extract_right_tcp_pose() if self._latest_right_tcp_pose is not None else None,
         )
 
     def apply_action(self, action: NZ100Action) -> None:
@@ -322,10 +335,23 @@ class NZ100Ros2IO:
     def _on_left_tcp_pose(self, msg) -> None:
         self._latest_left_tcp_pose = msg
 
+    def _on_right_tcp_pose(self, msg) -> None:
+        self._latest_right_tcp_pose = msg
+
     def _extract_left_tcp_pose(self) -> np.ndarray:
         msg = self._latest_left_tcp_pose
         if msg is None:
             raise RuntimeError(f"No left TCP pose received from {self.config.left_tcp_pose_topic}")
+        return self._pose_stamped_to_array(msg)
+
+    def _extract_right_tcp_pose(self) -> np.ndarray:
+        msg = self._latest_right_tcp_pose
+        if msg is None:
+            raise RuntimeError(f"No right TCP pose received from {self.config.right_tcp_pose_topic}")
+        return self._pose_stamped_to_array(msg)
+
+    @staticmethod
+    def _pose_stamped_to_array(msg) -> np.ndarray:
         return np.asarray(
             [
                 msg.pose.position.x,
@@ -480,6 +506,7 @@ class NZ100Ros2IO:
         require_joint_state: bool = True,
         require_gripper_state: bool = True,
         require_left_tcp_pose: bool = False,
+        require_right_tcp_pose: bool = False,
     ) -> None:
         last_status_time = 0.0
         while True:
@@ -498,13 +525,15 @@ class NZ100Ros2IO:
             joint_ok = self._latest_joint_state is not None or not require_joint_state
             gripper_ok = True  # Gripper state is read from SDK Modbus when building policy observations.
             left_tcp_ok = self._latest_left_tcp_pose is not None or not require_left_tcp_pose
-            if image_ok and joint_ok and gripper_ok and left_tcp_ok:
+            right_tcp_ok = self._latest_right_tcp_pose is not None or not require_right_tcp_pose
+            if image_ok and joint_ok and gripper_ok and left_tcp_ok and right_tcp_ok:
                 print(
                     "First NZ100 observation received: "
                     f"image={'ok' if image_ok else 'skipped'}, "
                     f"joint_state={'ok' if joint_ok else 'skipped'}, "
                     f"gripper_state={'ok' if gripper_ok else 'skipped'}, "
-                    f"left_tcp_pose={'ok' if left_tcp_ok else 'skipped'}"
+                    f"left_tcp_pose={'ok' if left_tcp_ok else 'skipped'}, "
+                    f"right_tcp_pose={'ok' if right_tcp_ok else 'skipped'}"
                 )
                 return
             now = time.time()
@@ -512,22 +541,16 @@ class NZ100Ros2IO:
                 missing = []
                 if require_image and self._latest_top_image is None:
                     missing.append(self.config.top_camera_topic)
-                if (
-                    require_image
-                    and self.config.camera_count >= 2
-                    and self._latest_wrist_left_image is None
-                ):
+                if require_image and self.config.camera_count >= 2 and self._latest_wrist_left_image is None:
                     missing.append(self.config.wrist_left_camera_topic)
-                if (
-                    require_image
-                    and self.config.camera_count >= 3
-                    and self._latest_wrist_right_image is None
-                ):
+                if require_image and self.config.camera_count >= 3 and self._latest_wrist_right_image is None:
                     missing.append(self.config.wrist_right_camera_topic)
                 if require_joint_state and self._latest_joint_state is None:
                     missing.append(self.config.joint_state_topic)
                 if require_left_tcp_pose and self._latest_left_tcp_pose is None:
                     missing.append(self.config.left_tcp_pose_topic)
+                if require_right_tcp_pose and self._latest_right_tcp_pose is None:
+                    missing.append(self.config.right_tcp_pose_topic)
                 print(f"Waiting for ROS2 topics: {missing}")
                 last_status_time = now
             time.sleep(0.05)

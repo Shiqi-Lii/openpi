@@ -22,6 +22,7 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.policies.nz100_policy as nz100_policy
 import openpi.policies.nz100_left_policy as nz100_left_policy
+import openpi.policies.nz100_statetcp_policy as nz100_statetcp_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -336,6 +337,30 @@ class LeRobotNZ100DataConfig(DataConfigFactory):
             action_sequence_keys=self.action_sequence_keys,
         )
 
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotNZ100StateTCPDataConfig(LeRobotNZ100DataConfig):
+    """Dual-arm NZ100 data with left and right TCP poses in the 30D state."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        data_transforms = _transforms.Group(
+            inputs=[nz100_statetcp_policy.NZ100StateTCPInputs(model_type=model_config.model_type)],
+            outputs=[nz100_statetcp_policy.NZ100StateTCPOutputs()],
+        )
+        if self.use_delta_joint_actions:
+            delta_action_mask = _transforms.make_bool_mask(7, -1, 7, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=self.repack_transforms,
+            data_transforms=data_transforms,
+            model_transforms=ModelTransformFactory(default_prompt=self.default_prompt)(model_config),
+            action_sequence_keys=self.action_sequence_keys,
+        )
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotNZ100LeftDataConfig(DataConfigFactory):
@@ -881,6 +906,16 @@ _CONFIGS = [
         ),
     ),
     TrainConfig(
+        name="pi05_nz100_statetcp",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotNZ100StateTCPDataConfig(
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi05_base/params"
+        ),
+    ),
+    TrainConfig(
         name="pi05_nz100_left",
         model=pi0_config.Pi0Config(pi05=True),
         data=LeRobotNZ100LeftDataConfig(
@@ -898,6 +933,21 @@ _CONFIGS = [
             legato_omega_dim=31,
         ),
         data=LeRobotNZ100DataConfig(
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi05_base/params"
+        ),
+    ),
+    # Legato fine-tuning with dual-arm joint/gripper state plus both TCP poses.
+    TrainConfig(
+        name="pi05_nz100_statetcp_legato",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            legato_enabled=True,
+            legato_omega_dim=31,
+        ),
+        data=LeRobotNZ100StateTCPDataConfig(
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(

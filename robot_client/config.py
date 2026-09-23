@@ -65,6 +65,8 @@ class Ros2Config:
     active_arm: str = "both"
     require_left_tcp_pose: bool = False
     left_tcp_pose_topic: str = "/planner/left_tcp_pose"
+    require_right_tcp_pose: bool = False
+    right_tcp_pose_topic: str = "/planner/right_tcp_pose"
     wrist_left_camera_topic: str = "/camera_wrist_left/color/image_raw"
     wrist_right_camera_topic: str = "/camera_wrist_right/color/image_raw"
     joint_state_topic: str = "/joint_states"
@@ -208,6 +210,8 @@ def _flat_ros2_data(data: dict[str, Any]) -> dict[str, Any]:
         "active_arm",
         "require_left_tcp_pose",
         "left_tcp_pose_topic",
+        "require_right_tcp_pose",
+        "right_tcp_pose_topic",
         "wrist_left_camera_topic",
         "wrist_right_camera_topic",
         "joint_state_topic",

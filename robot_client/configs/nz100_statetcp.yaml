@@ -1,0 +1,63 @@
+# Use with a pi05_nz100_statetcp checkpoint.
+policy_host: 192.168.168.150
+policy_port: 8001
+language_instruction: Pick up the bottle and place it in the blue box.
+# 可选: sync_chunk / async_queue / rtc_guidance / legato。
+# 使用 pi05_nz100_statetcp_legato checkpoint 时，将此项改为 legato。
+execution_mode: sync_chunk
+control_fps: 40
+open_loop_horizon: 40
+action_refill_threshold: 4
+point_time_from_start: 0.1
+
+# 仅 execution_mode: legato 时生效。
+legato_execute_horizon: 30
+legato_prefix_len: 5
+legato_ramp_end: 8
+legato_delay_buffer_size: 4
+legato_max_delay_steps: 10
+
+# State order: left joints/gripper, right joints/gripper, left TCP, right TCP.
+state_layout: dual_tcp
+require_left_tcp_pose: true
+left_tcp_pose_topic: /planner/left_tcp_pose
+require_right_tcp_pose: true
+right_tcp_pose_topic: /planner/right_tcp_pose
+
+camera_count: 3
+top_camera_topic: /camera_top/color/image_raw
+wrist_left_camera_topic: /camera_wrist_left/color/image_raw
+wrist_right_camera_topic: /camera_wrist_right/color/image_raw
+joint_state_topic: /joint_states
+left_trajectory_topic: /arm_left_controller/joint_trajectory
+right_trajectory_topic: /arm_right_controller/joint_trajectory
+
+ysrobot_sdk_path: /home/pc/VLA/python_sdk
+ysrobot_host: 192.168.2.123
+ysrobot_port: 5010
+ysrobot_timeout_ms: 5000
+ysrobot_login_level: L4
+ysrobot_login_pin: admin
+
+left_joint_names:
+  - left_joint1
+  - left_joint2
+  - left_joint3
+  - left_joint4
+  - left_joint5
+  - left_joint6
+  - left_joint7
+right_joint_names:
+  - right_joint1
+  - right_joint2
+  - right_joint3
+  - right_joint4
+  - right_joint5
+  - right_joint6
+  - right_joint7
+
+left_gripper_modbus_address: 9661
+right_gripper_modbus_address: 9662
+modbus_open_value: 1
+modbus_closed_value: 2
+gripper_default_value: 1.0

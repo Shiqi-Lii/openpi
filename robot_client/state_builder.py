@@ -13,12 +13,15 @@ import numpy as np
 
 RAW_STATE_DIM = 16
 LEFT_TCP_STATE_DIM = 15
+DUAL_TCP_STATE_DIM = 30
 
 LEFT_JOINT_SLICE = slice(0, 7)
 LEFT_GRIPPER_INDEX = 7
 LEFT_TCP_SLICE = slice(8, 15)
 RIGHT_JOINT_SLICE = slice(8, 15)
 RIGHT_GRIPPER_INDEX = 15
+LEFT_TCP_DATASET_SLICE = slice(16, 23)
+RIGHT_TCP_DATASET_SLICE = slice(23, 30)
 
 ACTION_DIM = 16
 
@@ -36,6 +39,7 @@ class NZ100RobotState:
     left_gripper: float
     right_gripper: float
     left_tcp_pose: np.ndarray | None = None
+    right_tcp_pose: np.ndarray | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,6 +79,25 @@ def build_raw_state(state: NZ100RobotState, *, layout: str = "dual") -> np.ndarr
         raw_state[LEFT_GRIPPER_INDEX] = np.float32(state.left_gripper)
         raw_state[LEFT_TCP_SLICE] = left_tcp_pose
         return raw_state
+    if layout in ("dual_tcp", "both_tcp", "statetcp"):
+        if state.left_tcp_pose is None or state.right_tcp_pose is None:
+            raise ValueError("left_tcp_pose and right_tcp_pose are required when state_layout='dual_tcp'")
+        left_tcp_pose = np.asarray(state.left_tcp_pose, dtype=np.float32)
+        right_tcp_pose = np.asarray(state.right_tcp_pose, dtype=np.float32)
+        if left_tcp_pose.shape != (7,) or right_tcp_pose.shape != (7,):
+            raise ValueError(
+                "left_tcp_pose and right_tcp_pose must both have shape (7,), "
+                f"got {left_tcp_pose.shape}/{right_tcp_pose.shape}"
+            )
+        raw_state = np.zeros((DUAL_TCP_STATE_DIM,), dtype=np.float32)
+        raw_state[LEFT_JOINT_SLICE] = left_joints
+        raw_state[RIGHT_JOINT_SLICE] = right_joints
+        raw_state[LEFT_GRIPPER_INDEX] = np.float32(state.left_gripper)
+        raw_state[RIGHT_GRIPPER_INDEX] = np.float32(state.right_gripper)
+        raw_state[LEFT_TCP_DATASET_SLICE] = left_tcp_pose
+        raw_state[RIGHT_TCP_DATASET_SLICE] = right_tcp_pose
+        return raw_state
+
 
     if layout not in ("dual", "both"):
         raise ValueError(f"Unsupported state_layout: {layout!r}")

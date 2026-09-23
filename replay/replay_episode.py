@@ -106,7 +106,7 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.stride <= 0:
         parser.error("--stride must be positive")
-    return args
+    return args 
 
 
 def _load_config(path: Path) -> dict:

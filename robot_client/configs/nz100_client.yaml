@@ -1,5 +1,5 @@
-policy_host: 192.168.2.125
-# policy_host: 192.168.168.150
+# policy_host: 192.168.2.125
+policy_host: 192.168.168.150
 policy_port: 8001
 control_fps: 40
 open_loop_horizon: 40
@@ -30,7 +30,7 @@ right_home_positions: [-0.28, 0.17, -0.09, 1.83, -1.75, -0.09, 0.00]
 
 # ===指令===========================================================
 # language_instruction: Pick up the bottle and place it in the blue box.
-language_instruction: Open the blue cylindrical package, and then close the blue cylindrical package.
+language_instruction: Pick up the blue cylinder on the table and open the blue cylinder, and then close the blue cylinder, finally place the blue cylinder on the table
 # ================================================================
 
 # ===执行模式=======================================================
@@ -42,7 +42,7 @@ language_instruction: Open the blue cylindrical package, and then close the blue
 execution_mode: legato
 
 # async_queue 参数只在 execution_mode 为 async_queue 时生效。
-action_refill_threshold: 6
+action_refill_threshold: 4
 
 # RTC 参数只在 execution_mode 为 rtc_guidance 时生效。
 rtc_execute_horizon: 35
@@ -57,9 +57,9 @@ rtc_max_delay_steps: 12
 # Legato 参数只在 execution_mode 为 legato 时生效。
 # legato_prefix_len 对应论文里的 full-guidance delay d。
 # legato_ramp_end 是 full guidance + ramp 的结束位置；例如 d=4, ramp=0 时设为 4。
-legato_execute_horizon: 35 
-legato_prefix_len: 5
-legato_ramp_end: 15
+legato_execute_horizon: 30
+legato_prefix_len: 4
+legato_ramp_end: 6
 legato_delay_buffer_size: 4
 legato_max_delay_steps: 10
 # ================================================================

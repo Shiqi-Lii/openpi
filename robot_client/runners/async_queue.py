@@ -208,4 +208,5 @@ def _project_robot_state_to_queue_tail(robot_state: NZ100RobotState, tail_action
         left_gripper=float(tail.left_gripper),
         right_gripper=float(tail.right_gripper),
         left_tcp_pose=robot_state.left_tcp_pose,
+        right_tcp_pose=robot_state.right_tcp_pose,
     )

@@ -25,6 +25,7 @@ def read_mock_robot_state() -> NZ100RobotState:
         left_gripper=1.0,
         right_gripper=1.0,
         left_tcp_pose=np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        right_tcp_pose=np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32),
     )
 
 
@@ -101,7 +102,8 @@ def format_state(state: NZ100RobotState) -> str:
         f"left_gripper={state.left_gripper:.1f}, "
         f"left_tcp={format_array(state.left_tcp_pose) if state.left_tcp_pose is not None else 'None'}, "
         f"right={format_array(state.right_joints)}, "
-        f"right_gripper={state.right_gripper:.1f}"
+        f"right_gripper={state.right_gripper:.1f}, "
+        f"right_tcp={format_array(state.right_tcp_pose) if state.right_tcp_pose is not None else 'None'}"
     )
 
 
